@@ -475,6 +475,46 @@ def _approve_command_voice(command: str) -> tuple[bool, str]:
     return False, "no clear answer — declined"
 
 
+def _confirm_action(prompt: str) -> bool:
+    """Text yes/no/always confirmation for an outward action (e.g. a calendar write)."""
+    print(f"\n  ⚠  {prompt}")
+    try:
+        ans = input("  [y] yes   [n] no   [a] yes to all this session\n  > ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    if ans in {"a", "all", "always"}:
+        approval.confirm_auto()
+        return True
+    return ans in {"y", "yes"}
+
+
+def _confirm_action_voice(prompt: str) -> bool:
+    """Spoken yes/no/always confirmation for an outward action during a voice session."""
+    import voice
+    print(f"\n  ⚠  {prompt}")
+    voice.speak_interruptible(f"{prompt} Say yes, no, or always.")
+    for _ in range(2):
+        print("  🎤 (say yes / no / always)…", end="\r", flush=True)
+        try:
+            ans = (voice.listen_vad(start_timeout=15) or "").lower()
+        except (KeyboardInterrupt, EOFError):
+            return False
+        print(" " * 34, end="\r", flush=True)
+        if not ans:
+            voice.speak_interruptible("I didn't catch that.")
+            continue
+        if re.search(r"\b(always|every ?time|go ahead with everything|yes to all)\b", ans):
+            approval.confirm_auto()
+            return True
+        if re.search(r"\b(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|please do|approve|sounds good)\b", ans):
+            return True
+        if re.search(r"\b(no|nope|nah|don'?t|do not|deny|stop|cancel|skip)\b", ans):
+            return False
+        voice.speak_interruptible("Was that a yes or a no?")
+    return False
+
+
 def _setup_logging() -> None:
     level = logging.DEBUG if os.environ.get("ASSISTANT_DEBUG") else logging.WARNING
     logging.basicConfig(
@@ -739,6 +779,8 @@ def main() -> None:
 
     if config.COMMAND_APPROVAL == "prompt":
         approval.set_approver(_approve_command_voice if use_voice else _approve_command)
+    # Outward actions (e.g. calendar writes) confirm through the same in/out channel.
+    approval.set_confirmer(_confirm_action_voice if use_voice else _confirm_action)
 
     name = config.AGENT_NAME
     label = name.lower()  # prompt label, e.g. "kara ▸"

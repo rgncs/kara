@@ -16,6 +16,10 @@ voices/
 # Local secrets
 .env
 
+# Google OAuth secrets (Calendar tool)
+credentials.json
+token.json
+
 # Claude Code local config
 .claude/
 

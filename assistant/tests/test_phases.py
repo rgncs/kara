@@ -832,3 +832,31 @@ def test_skill_preface_and_frontmatter_parsing(tmp_path):
     pre = skills.skills_preface(m)
     assert "Skill: demo" in pre and "three steps" in pre
     assert skills.skills_preface([]) == ""
+
+
+def test_confirm_action_gate():
+    import approval
+    approval.reset()
+    # no confirmer registered (non-interactive) → fail safe to denied
+    assert approval.confirm_action("do the thing?") is False
+    # a registered confirmer decides
+    approval.set_confirmer(lambda prompt: True)
+    assert approval.confirm_action("do the thing?") is True
+    approval.set_confirmer(lambda prompt: False)
+    assert approval.confirm_action("do the thing?") is False
+    # "yes to all" latches on for the session
+    approval.confirm_auto()
+    assert approval.confirm_action("anything now?") is True
+    approval.reset()
+    assert approval.confirm_action("back to denied?") is False
+
+
+def test_calendar_skill_routes():
+    import skills
+    def matched(text):
+        return [s["name"] for s in skills.match_skills(text)]
+    assert "calendar" in matched("what's on my calendar tomorrow")
+    assert "calendar" in matched("schedule a meeting on my calendar friday")
+    assert "calendar" in matched("am i free tuesday afternoon")
+    assert "calendar" in matched("cancel my dentist appointment")
+    assert matched("write a poem about the ocean") == []

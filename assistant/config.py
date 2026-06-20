@@ -68,6 +68,25 @@ TRASH_TTL_DAYS = 365         # recently-deleted memories are purged for good aft
 # tool-calling is inconsistent; set MEMORY_TOOL=1 to also expose it.
 MEMORY_TOOL_ENABLED = os.environ.get("MEMORY_TOOL", "").lower() in {"1", "true", "yes"}
 
+# --- Google Calendar (OAuth tool) --------------------------------------------
+# OAuth "desktop app" flow: you create credentials.json in the Google Cloud
+# console (Calendar API enabled), and the first run writes token.json (a refresh
+# token) after a one-time browser consent. Both files are secrets — gitignored.
+# Scope `calendar` = read/write; reads are free, but create/delete go through the
+# confirm_action gate (CALENDAR_CONFIRM_WRITES) unless you turn it off.
+GOOGLE_CREDENTIALS_PATH = os.path.abspath(os.environ.get(
+    "GOOGLE_CREDENTIALS_PATH", os.path.join(os.path.dirname(__file__), "..", "credentials.json")))
+GOOGLE_TOKEN_PATH = os.path.abspath(os.environ.get(
+    "GOOGLE_TOKEN_PATH", os.path.join(os.path.dirname(__file__), "..", "token.json")))
+GOOGLE_CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"]
+CALENDAR_ID = os.environ.get("CALENDAR_ID", "primary")
+CALENDAR_CONFIRM_WRITES = os.environ.get(
+    "CALENDAR_CONFIRM_WRITES", "1").lower() in {"1", "true", "yes"}
+# Calendar tools are offered to the model only once set up — credentials.json
+# exists — or when forced on with CALENDAR=1.
+CALENDAR_ENABLED = (os.environ.get("CALENDAR", "").lower() in {"1", "true", "yes"}
+                    or os.path.exists(GOOGLE_CREDENTIALS_PATH))
+
 # --- Skills (markdown playbooks) ---------------------------------------------
 # A skill is a vetted Markdown file with frontmatter (name/description/triggers)
 # holding step-by-step instructions for a task, loaded into a turn when its

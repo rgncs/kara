@@ -13,6 +13,12 @@ chromadb>=0.5
 openpyxl>=3.1
 python-docx>=1.1
 
+# Google Calendar tool (OAuth desktop flow) — optional; only needed if you set up
+# credentials.json and use the calendar skill.
+google-api-python-client>=2.0
+google-auth-oauthlib>=1.0
+google-auth-httplib2>=0.2
+
 # Phase 5 (voice) — local STT (Whisper) + neural TTS (Piper); `say` is the fallback
 faster-whisper>=1.0
 sounddevice>=0.4

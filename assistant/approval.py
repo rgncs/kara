@@ -26,6 +26,12 @@ _session_allowed: set[str] = set()  # specific exact commands approved this sess
 _session_prefixes: set[str] = set() # approved leading program names (e.g. "git")
 _approver = None                    # callable(command) -> (bool, reason), set by the CLI
 
+# Generic yes/no confirmation for non-shell outward actions (e.g. creating a
+# calendar event). Separate from the shell approver above: same inject-from-CLI
+# pattern, but a plain callable(prompt) -> bool. Fails safe to DENY when unset.
+_confirmer = None
+_confirm_auto = False               # user said "always" to outward-action confirmations
+
 
 def command_prefix(command: str):
     """Return the leading program name if it's safe to approve by prefix, else None.
@@ -65,13 +71,40 @@ def allow_prefix(prefix: str) -> None:
     _session_prefixes.add(prefix)
 
 
+def set_confirmer(fn) -> None:
+    """Register the interactive yes/no confirmer for outward actions (CLI provides one)."""
+    global _confirmer
+    _confirmer = fn
+
+
+def confirm_auto() -> None:
+    """Approve all subsequent outward-action confirmations for this session."""
+    global _confirm_auto
+    _confirm_auto = True
+
+
+def confirm_action(prompt: str) -> bool:
+    """Ask the user to confirm a non-shell outward action (e.g. a calendar write).
+
+    True in auto mode or once the user has said "always"; otherwise defers to the
+    registered confirmer. Fails safe to False when no confirmer is available.
+    """
+    if config.COMMAND_APPROVAL == "auto" or _confirm_auto:
+        return True
+    if _confirmer is None:
+        return False
+    return bool(_confirmer(prompt))
+
+
 def reset() -> None:
     """Clear all session approval state (used by tests)."""
-    global _session_auto, _approver
+    global _session_auto, _approver, _confirmer, _confirm_auto
     _session_auto = False
     _session_allowed.clear()
     _session_prefixes.clear()
     _approver = None
+    _confirmer = None
+    _confirm_auto = False
 
 
 def is_approved(command: str) -> tuple[bool, str]:

@@ -37,6 +37,18 @@ if config.MEMORY_TOOL_ENABLED:
     TOOLS.append(memory_tool.SCHEMA)
     TOOL_FUNCTIONS["save_memory"] = memory_tool.save_memory
 
+# Google Calendar tools appear only when set up (credentials.json present) or forced
+# on with CALENDAR=1, so they don't clutter the tool list otherwise.
+if config.CALENDAR_ENABLED:
+    from . import calendar_tool
+    TOOLS += [calendar_tool.LIST_EVENTS_SCHEMA, calendar_tool.CREATE_EVENT_SCHEMA,
+              calendar_tool.DELETE_EVENT_SCHEMA]
+    TOOL_FUNCTIONS.update({
+        "list_events": calendar_tool.list_events,
+        "create_event": calendar_tool.create_event,
+        "delete_event": calendar_tool.delete_event,
+    })
+
 # Guard against the registry halves drifting out of sync.
 _schema_names = {t["function"]["name"] for t in TOOLS}
 assert _schema_names == set(TOOL_FUNCTIONS), (
