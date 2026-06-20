@@ -13,6 +13,13 @@ unless CALENDAR_CONFIRM_WRITES is off.
 """
 import logging
 import os
+import sys
+
+# Allow running this file directly for one-time OAuth setup
+# (`python assistant/tools/calendar_tool.py`): put assistant/ on the path so the
+# sibling `approval`/`config` modules resolve the same way they do under main.py.
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import approval
 import config
