@@ -860,3 +860,34 @@ def test_calendar_skill_routes():
     assert "calendar" in matched("am i free tuesday afternoon")
     assert "calendar" in matched("cancel my dentist appointment")
     assert matched("write a poem about the ocean") == []
+
+
+def test_calendar_time_resolution():
+    import datetime
+    from tools import calendar_tool as c
+    # fixed reference: Wednesday 2026-06-17 10:00, +00:00
+    now = datetime.datetime(2026, 6, 17, 10, 0, tzinfo=datetime.timezone.utc)
+    assert now.weekday() == 2  # sanity: Wednesday
+
+    def parses(s):  # valid RFC3339 the Calendar API will accept
+        return bool(s) and isinstance(datetime.datetime.fromisoformat(s), datetime.datetime)
+
+    # relative phrases expand into a well-formed future window
+    start, end = c._relative_window("next week", now)
+    assert start.weekday() == 0 and start > now            # next Monday
+    assert (end.date() - start.date()).days == 6           # through Sunday
+    assert c._relative_window("tomorrow", now)[0].date() == datetime.date(2026, 6, 18)
+    assert c._relative_window("this week", now)[1].weekday() == 6  # ends Sunday
+
+    # date-only and naive inputs become RFC3339; full timestamps pass through
+    assert c._normalize_dt("2026-06-23", False, now).startswith("2026-06-23T00:00")
+    assert c._normalize_dt("2026-06-23", True, now).startswith("2026-06-23T23:59")
+    assert c._normalize_dt("2026-06-23T15:00:00+00:00", False, now) == "2026-06-23T15:00:00+00:00"
+
+    # _resolve_window never yields the bad inputs that used to 400
+    tmin, tmax = c._resolve_window("next week", None, now)
+    assert parses(tmin) and parses(tmax)
+    tmin, tmax = c._resolve_window("2026-06-23", "2026-06-30", now)
+    assert parses(tmin) and parses(tmax)
+    tmin, tmax = c._resolve_window(None, None, now)         # empty → now, no max
+    assert parses(tmin) and tmax is None

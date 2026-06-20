@@ -66,6 +66,92 @@ def _calendar_tz(service) -> "str | None":
         return None
 
 
+# --- time normalization ------------------------------------------------------
+# qwen is unreliable at producing RFC3339 timestamps with the right timezone, and
+# the Calendar API 400s on anything else ("next week", "2026-06-23"). So the TOOL
+# resolves times: relative phrases and date-only/naive inputs all become RFC3339.
+import datetime  # noqa: E402
+
+_RELATIVE = {"now", "today", "tonight", "tomorrow", "this week", "next week",
+             "this weekend", "next weekend", "this month", "next month"}
+
+
+def _local_now() -> "datetime.datetime":
+    return datetime.datetime.now().astimezone()
+
+
+def _sod(dt):   # start of day
+    return dt.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _eod(dt):   # end of day
+    return dt.replace(hour=23, minute=59, second=59, microsecond=0)
+
+
+def _month_end(first):
+    nm = (first.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
+    return _eod(nm - datetime.timedelta(days=1))
+
+
+def _relative_window(phrase: str, now):
+    """Map a relative phrase to (start, end) datetimes, or None if unrecognized."""
+    p = phrase.strip().lower()
+    sod, wd = _sod(now), now.weekday()  # Monday=0 .. Sunday=6
+    if p == "now":
+        return now, None
+    if p in ("today", "tonight"):
+        return now, _eod(now)
+    if p == "tomorrow":
+        t = sod + datetime.timedelta(days=1)
+        return t, _eod(t)
+    if p == "this week":
+        return now, _eod(sod + datetime.timedelta(days=6 - wd))
+    if p == "next week":
+        start = sod + datetime.timedelta(days=7 - wd)
+        return start, _eod(start + datetime.timedelta(days=6))
+    if p in ("this weekend", "next weekend"):
+        sat = sod + datetime.timedelta(days=(5 - wd) % 7)
+        if p == "next weekend" and (5 - wd) % 7 == 0:
+            sat += datetime.timedelta(days=7)
+        return sat, _eod(sat + datetime.timedelta(days=1))
+    if p == "this month":
+        return now, _month_end(sod.replace(day=1))
+    if p == "next month":
+        first = (sod.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
+        return first, _month_end(first)
+    return None
+
+
+def _normalize_dt(value: str, end_of_day: bool, now):
+    """Coerce a concrete date/datetime string to an RFC3339 string, or None if unparseable."""
+    value = value.strip()
+    if "T" not in value:                                   # date-only → start/end of that day
+        try:
+            d = datetime.date.fromisoformat(value)
+        except ValueError:
+            return None
+        base = datetime.datetime.combine(d, datetime.time(), tzinfo=now.tzinfo)
+        return (_eod(base) if end_of_day else base).isoformat()
+    if value.endswith("Z") or "+" in value[11:] or "-" in value[11:]:
+        return value                                       # already has an offset
+    try:                                                   # naive datetime → attach local tz
+        return datetime.datetime.fromisoformat(value).astimezone().isoformat()
+    except ValueError:
+        return None
+
+
+def _resolve_window(time_min: "str | None", time_max: "str | None", now=None):
+    """Return (time_min, time_max) as RFC3339 strings, accepting relative phrases,
+    date-only, naive, or full timestamps. Empty time_min defaults to now."""
+    now = now or _local_now()
+    if time_min and time_min.strip().lower() in _RELATIVE:
+        start, end = _relative_window(time_min, now)
+        return start.isoformat(), (time_max or (end.isoformat() if end else None))
+    tmin = _normalize_dt(time_min, False, now) if time_min else None
+    tmax = _normalize_dt(time_max, True, now) if time_max else None
+    return (tmin or now.isoformat()), tmax
+
+
 def _time_field(value: str, tz: "str | None") -> dict:
     """Build a Calendar API start/end field from an ISO string.
 
@@ -85,13 +171,11 @@ def _time_field(value: str, tz: "str | None") -> dict:
 def list_events(time_min: str = None, time_max: str = None,
                 max_results: int = 10, query: str = None) -> str:
     """List upcoming events (optionally within a window or matching a text query)."""
-    import datetime
     try:
         service = _service()
     except Exception as e:  # noqa: BLE001
         return f"ERROR: {e}"
-    if not time_min:
-        time_min = datetime.datetime.now().astimezone().isoformat()
+    time_min, time_max = _resolve_window(time_min, time_max)
     params = {"calendarId": config.CALENDAR_ID, "timeMin": time_min,
               "maxResults": max(1, min(int(max_results), 50)),
               "singleEvents": True, "orderBy": "startTime"}
@@ -160,12 +244,15 @@ LIST_EVENTS_SCHEMA = {
     "function": {
         "name": "list_events",
         "description": "List upcoming Google Calendar events, optionally within a time "
-                       "window or matching a text query. Times are ISO 8601.",
+                       "window or matching a text query. time_min/time_max accept a "
+                       "relative phrase ('today', 'tomorrow', 'this week', 'next week', "
+                       "'this weekend', 'next month'), a date ('2026-06-23'), or a full "
+                       "ISO datetime — the tool resolves them, so prefer the simple phrase.",
         "parameters": {
             "type": "object",
             "properties": {
-                "time_min": {"type": "string", "description": "ISO start of window (default: now)."},
-                "time_max": {"type": "string", "description": "ISO end of window (optional)."},
+                "time_min": {"type": "string", "description": "Start of window: relative phrase, date, or ISO datetime (default: now)."},
+                "time_max": {"type": "string", "description": "End of window (optional); same formats. A relative phrase in time_min sets this automatically."},
                 "max_results": {"type": "integer", "description": "Max events to return (default 10)."},
                 "query": {"type": "string", "description": "Free-text filter (optional)."},
             },
