@@ -1,0 +1,37 @@
+#!/bin/bash
+# Manage the local SearXNG container for Kara's self-hosted web search.
+#   bin/searxng start | stop | status
+#
+# Then run Kara with:  SEARCH_PROVIDER=searxng kara
+
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  SOURCE="$(readlink "$SOURCE")"; [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+KARA_HOME="$(dirname "$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)")"
+NAME="kara-searxng"
+URL="http://localhost:8080"
+
+case "${1:-status}" in
+  start)
+    docker info >/dev/null 2>&1 || { echo "Docker daemon not running — start Docker Desktop."; exit 1; }
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
+    docker run -d --name "$NAME" -p 8080:8080 \
+      -v "$KARA_HOME/searxng:/etc/searxng" searxng/searxng >/dev/null
+    printf "Starting SearXNG"
+    for _ in $(seq 1 60); do
+      curl -fsS "$URL/search?q=ok&format=json" >/dev/null 2>&1 && { echo " — up at $URL"; exit 0; }
+      printf "."; sleep 2
+    done
+    echo " — did not come up; check: docker logs $NAME"; exit 1
+    ;;
+  stop)   docker rm -f "$NAME" >/dev/null 2>&1 && echo "Stopped." || echo "Not running." ;;
+  status)
+    if curl -fsS "$URL/search?q=ok&format=json" >/dev/null 2>&1; then echo "SearXNG: up ($URL)";
+    else echo "SearXNG: down — run 'bin/searxng start'"; fi
+    ;;
+  *) echo "usage: bin/searxng {start|stop|status}"; exit 1 ;;
+esac

@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Chroma persistence (Phase 4)
+assistant/memory/memory_db/
+
+# Project-local memory created wherever kara is launched
+.kara_memory/
+
+# Piper voice models (large; downloaded via setup)
+voices/
+
+# Local secrets
+.env
+
+# Claude Code local config
+.claude/
+
+# Agent-written personal-data artifacts (kept locally, never committed)
+user_info/
+remembered_facts.md

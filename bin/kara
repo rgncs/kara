@@ -1,0 +1,49 @@
+#!/bin/bash
+# Kara — local coding agent launcher.
+#
+# Workspace is the directory you run `kara` from: this script deliberately does
+# NOT change directories, so Kara's WORKSPACE_ROOT (which defaults to the current
+# working directory) is wherever you invoked the command.
+#
+# Any extra args/env pass straight through, e.g.:
+#   COMMAND_APPROVAL=auto kara
+#   ASSISTANT_DEBUG=1 kara
+
+set -euo pipefail
+
+# Resolve this script's real location (following the PATH symlink) so the launcher
+# works no matter where the Kara repo lives.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+BIN_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
+KARA_HOME="$(dirname "$BIN_DIR")"
+
+PY="$KARA_HOME/.venv/bin/python"
+OLLAMA_BIN="$(command -v ollama || echo /opt/homebrew/opt/ollama/bin/ollama)"
+OLLAMA_URL="http://localhost:11434/api/tags"
+
+if [ ! -x "$PY" ]; then
+  echo "kara: Python venv not found at $PY" >&2
+  exit 1
+fi
+
+# Ensure the Ollama daemon is reachable; start it in the background if not.
+if ! curl -fsS "$OLLAMA_URL" >/dev/null 2>&1; then
+  echo "kara: starting Ollama daemon..." >&2
+  "$OLLAMA_BIN" serve >/tmp/ollama.log 2>&1 &
+  for _ in $(seq 1 30); do
+    curl -fsS "$OLLAMA_URL" >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  if ! curl -fsS "$OLLAMA_URL" >/dev/null 2>&1; then
+    echo "kara: Ollama did not come up — see /tmp/ollama.log" >&2
+    exit 1
+  fi
+fi
+
+# exec preserves the current working directory => that becomes Kara's workspace.
+exec "$PY" "$KARA_HOME/assistant/main.py" "$@"

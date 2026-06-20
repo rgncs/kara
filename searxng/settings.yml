@@ -1,0 +1,10 @@
+# SearXNG config for Kara's self-hosted web-search provider.
+# Enables the JSON API (off by default) and disables the bot limiter for local use.
+use_default_settings: true
+server:
+  secret_key: "kara-dev-secret-change-me"
+  limiter: false
+search:
+  formats:
+    - html
+    - json
