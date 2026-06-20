@@ -88,6 +88,26 @@ def _is_followup_reference(text: str) -> bool:
     return bool(_FOLLOWUP_REF.search(text))
 
 
+# A recalled memory about the user's girlfriend (the flowers-for-Ixtlalli reminder, how he
+# describes her, etc.) must NOT be volunteered randomly. The model keeps reciting it off-topic
+# despite the prompt, so enforce it here: such memories are dropped from a turn UNLESS the
+# user is actually asking about a gift for her, says she's upset, or names her / "my girlfriend".
+_RELATIONSHIP_MEM = re.compile(r"(?i)\b(girlfriend|ixtlalli)\b")
+_RELATIONSHIP_OK = re.compile(
+    r"(?i)\b(girlfriend|ixtlalli|gift|present|get her|buy her|surprise her|for her birthday|"
+    r"anniversary|what should i get|what to get her|get for her)\b|"
+    r"\bshe(?:'s| is| was| seems| looks| sounds)?\s*(?:so |really |a bit |kind of )?"
+    r"(?:sad|upset|down|blue|crying|mad|angry|unhappy|stressed|having a (?:bad|rough|hard))\b|"
+    r"\b(cheer her up|make her happy|she had a (?:bad|rough|hard) day)\b")
+
+
+def _filter_relationship_mems(mems: list[dict], user_input: str) -> list[dict]:
+    """Drop girlfriend-related memories unless the turn is actually about her."""
+    if _RELATIONSHIP_OK.search(user_input):
+        return mems
+    return [m for m in mems if not _RELATIONSHIP_MEM.search(m.get("text", ""))]
+
+
 # "what have we been talking about?" — recap the current conversation, not memory.
 _RECAP = re.compile(
     r"(?i)(what (?:have|did|were) we (?:been )?(?:talk(?:ing|ed)?|discuss(?:ing|ed)?|"
@@ -501,6 +521,8 @@ def process_turn(messages: list[dict], user_input: str, printer: "_Printer | Non
         except Exception as e:  # noqa: BLE001 — memory must never break chatting
             log.debug("recall failed: %s", e)
             mems = []
+        # Never volunteer girlfriend/Ixtlalli memories unless the turn is about her.
+        mems = _filter_relationship_mems(mems, user_input)
 
     # Process this turn's memory intent BEFORE replying (save/delete/restore/ask), so
     # whatever Kara says about memory is accurate. Returns a note to inject for her.

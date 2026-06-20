@@ -461,6 +461,23 @@ def test_followup_reference_skips_memory():
     assert not main._is_followup_reference("remember my birthday is August 5")
     assert not main._is_followup_reference("what do you remember about my girlfriend")
     assert not main._is_followup_reference("what do you know about Wontaek")
+
+
+def test_relationship_memory_only_surfaces_when_relevant():
+    import main
+    flower = {"text": "Remind Wontaek to get his girlfriend Ixtlalli flowers ONLY when he asks what gift to get her."}
+    desc = {"text": "Wontaek describes his girlfriend Ixtlalli as beautiful and kind."}
+    other = {"text": "Kevin and the user like to go snowboarding together."}
+    mems = [flower, desc, other]
+    def kept(s):
+        return [m["text"] for m in main._filter_relationship_mems(mems, s)]
+    # off-topic turns drop the girlfriend memories entirely
+    assert kept("I always miss metropolitan plant exchange") == [other["text"]]
+    assert kept("what are the best flower stores in Fort Lee") == [other["text"]]
+    # but a gift question, her being upset, or asking about her keeps them
+    assert flower["text"] in kept("what should I get her for her birthday")
+    assert flower["text"] in kept("she seems really sad today")
+    assert desc["text"] in kept("what do you remember about my girlfriend")
     # conversation-recap requests also skip memory (summarize the chat, not background)
     assert main._is_conversation_recap("what have we been talking about?")
     assert main._is_conversation_recap("can you recap our conversation")
