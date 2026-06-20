@@ -453,6 +453,11 @@ def test_followup_reference_skips_memory():
     # genuine personal questions are NOT follow-up references (memory still recalled)
     assert not main._is_followup_reference("what should I get my girlfriend")
     assert not main._is_followup_reference("remember my birthday is August 5")
+    # conversation-recap requests also skip memory (summarize the chat, not background)
+    assert main._is_conversation_recap("what have we been talking about?")
+    assert main._is_conversation_recap("can you recap our conversation")
+    assert main._is_conversation_recap("remind me what we discussed")
+    assert not main._is_conversation_recap("what is my girlfriend's name")
 
 
 def test_deflection_detection_and_search_check():

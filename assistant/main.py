@@ -77,6 +77,20 @@ def _is_followup_reference(text: str) -> bool:
     return bool(_FOLLOWUP_REF.search(text))
 
 
+# "what have we been talking about?" — recap the current conversation, not memory.
+_RECAP = re.compile(
+    r"(?i)(what (?:have|did|were) we (?:been )?(?:talk(?:ing|ed)?|discuss(?:ing|ed)?|"
+    r"chat(?:ting|ted)?|cover(?:ing|ed)?)(?: about)?"
+    r"|(?:recap|summar(?:y|ize|ise)|sum up|go over|catch me up on) (?:our|this|the) "
+    r"(?:conversation|chat|discussion|talk|session)"
+    r"|what (?:was|were|is) (?:our|this|the) (?:conversation|chat|discussion|talk) about"
+    r"|remind me what we (?:talked|were talking|chatted|discussed))")
+
+
+def _is_conversation_recap(text: str) -> bool:
+    return bool(_RECAP.search(text))
+
+
 def _is_memory_question(text: str) -> bool:
     return bool(_MEM_Q.search(text))
 
@@ -417,8 +431,9 @@ def process_turn(messages: list[dict], user_input: str, printer: "_Printer | Non
     base_len = len(messages)  # index of this turn's user message / rollback point
 
     # Recall memories (both scopes) for context — but NOT on a follow-up that refers to
-    # the current conversation ("what's good there?"), so a stray memory can't hijack it.
-    if _is_followup_reference(user_input):
+    # the current conversation ("what's good there?") or a recap request ("what have we
+    # been talking about?"), so a stray memory can't hijack or pollute the answer.
+    if _is_followup_reference(user_input) or _is_conversation_recap(user_input):
         mems = []
     else:
         try:
