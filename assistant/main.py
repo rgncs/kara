@@ -276,10 +276,11 @@ def _memory_preface(mems: list[dict]) -> str:
         except Exception:  # noqa: BLE001
             lines.append(f"- {m['text']}")
     return (
-        "[Background you already know about me (treat as true; prefer the most recent "
-        "date if any conflict). Use it to answer, but do NOT list, recite, or summarize "
-        "these back to me unless I explicitly ask what you remember:\n"
-        + "\n".join(lines) + "]"
+        "[Background you already know about me (treat as true; prefer the most recent date "
+        "if any conflict). Use an item ONLY if it directly answers my CURRENT message. Do "
+        "NOT list or recite these back, and do NOT tack reminders, to-dos, suggestions, or "
+        "personal details onto a reply about something else — answer only what I asked and "
+        "stay on topic:\n" + "\n".join(lines) + "]"
     )
 
 
