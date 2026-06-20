@@ -6,6 +6,7 @@ round-trip is the only thing that creates conversational memory.
 import datetime
 import logging
 import os
+import random
 import re
 import sys
 
@@ -586,6 +587,19 @@ def _get_voice_input(voice, hands_free: bool) -> str:
     return voice.listen()
 
 
+# Quick spoken acknowledgements so the user hears something the instant she stops
+# talking, instead of dead air while Kara thinks / searches the web.
+_THINKING_FILLERS = (
+    "Got it, let me think about that.",
+    "Hold on a sec while I look into that.",
+    "Good question — let me see.",
+    "Let me look that up real quick.",
+    "One sec, let me check on that.",
+    "Sure, give me a moment.",
+    "Okay, let me dig into that.",
+)
+
+
 def _voice_loop(messages: list[dict], label: str) -> None:
     import voice
     hands_free = config.VOICE_HANDS_FREE
@@ -638,6 +652,9 @@ def _voice_loop(messages: list[dict], label: str) -> None:
         if _matches(user_input, ("exit", "quit", "stop", "goodbye", "goodbye kara", "bye")):
             print("bye.")
             break
+
+        # Immediate acknowledgement so she doesn't sit in silence while thinking/searching.
+        voice.speak_interruptible(random.choice(_THINKING_FILLERS))
 
         reply = process_turn(messages, user_input, printer=_Printer(label))
         if not reply:
