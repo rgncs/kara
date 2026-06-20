@@ -284,6 +284,58 @@ def _memory_preface(mems: list[dict]) -> str:
     )
 
 
+# Phrases that mean the model deflected to its training instead of searching.
+_DEFLECT = re.compile(
+    r"(?i)(knowledge cutoff|training (?:data|cutoff)|as of my last|"
+    r"don'?t have (?:access to |the )?(?:the )?(?:most )?(?:up.?to.?date|current|real.?time|latest)|"
+    r"can'?t provide the most current|may be outdated|might be out ?of ?date|"
+    r"check (?:their|the)? ?(?:current|latest|recent) (?:website|reviews?|menu|info|information|prices?)|"
+    r"i'?d (?:suggest|recommend) (?:checking|looking))")
+
+
+def _is_deflection(text: str) -> bool:
+    return bool(_DEFLECT.search(text or ""))
+
+
+def _used_web_search(messages: list[dict], since: int) -> bool:
+    """True if a web_search tool call appears in the messages added this turn."""
+    for m in messages[since:]:
+        for tc in (m.get("tool_calls") or []):
+            if (tc.get("function") or {}).get("name") == "web_search":
+                return True
+    return False
+
+
+def _force_search_answer(messages: list[dict], user_input: str, printer: "_Printer | None") -> "str | None":
+    """The model deflected without searching — search now and re-answer from results."""
+    from tools.search import web_search
+    try:
+        results = web_search(user_input)
+    except Exception as e:  # noqa: BLE001
+        log.debug("forced web_search failed: %s", e)
+        return None
+    if not results or results.startswith("ERROR"):
+        return None
+    if messages and messages[-1].get("role") == "assistant":
+        messages.pop()                                  # drop the deflecting reply
+    messages.append({"role": "user", "content":
+        "Answer my previous question using ONLY these current web results. Cite them "
+        "[1], [2]. Do NOT search again, mention any knowledge cutoff, or tell me to check "
+        "elsewhere:\n" + results})
+    print("\n  ↻ that was dated — checking the web…")
+    p2 = _Printer(printer.label) if printer else None
+    try:
+        reply = agent_turn(messages, on_token=p2.write if p2 else None)
+        if p2:
+            if not p2.started and reply:
+                p2.write(reply)
+            p2.finish()
+        return reply
+    except Exception as e:  # noqa: BLE001
+        log.debug("re-answer failed: %s", e)
+        return None
+
+
 def _approve_command(command: str) -> tuple[bool, str]:
     """Interactive approval prompt for run_command (installed only in 'prompt' mode)."""
     prefix = approval.command_prefix(command)
@@ -391,6 +443,13 @@ def process_turn(messages: list[dict], user_input: str, printer: "_Printer | Non
         if not printer.started and reply:
             printer.write(reply)  # nothing streamed (e.g. MAX_STEPS fallback) — show it
         printer.finish()
+
+    # Tripwire: if she deflected to her training ("knowledge cutoff", "check current
+    # reviews") without searching, search now and re-answer from current results.
+    if reply and _is_deflection(reply) and not _used_web_search(messages, base_len):
+        corrected = _force_search_answer(messages, user_input, printer)
+        if corrected:
+            reply = corrected
 
     return reply
 

@@ -444,6 +444,20 @@ def test_clean_for_speech_strips_markup():
     assert "Imperial Peking duck" in spoken and "Wing Lei" in spoken
 
 
+def test_deflection_detection_and_search_check():
+    import main
+    assert main._is_deflection("As my recent knowledge cutoff is 2025, I can't provide the most current information")
+    assert main._is_deflection("I'd suggest checking their current website or recent reviews")
+    assert main._is_deflection("My data may be outdated")
+    assert not main._is_deflection("Wing Lei serves Peking duck and dim sum.")
+    # detects a web_search tool call among this turn's messages
+    msgs = [{"role": "user", "content": "q"},
+            {"role": "assistant", "tool_calls": [{"function": {"name": "web_search"}}]},
+            {"role": "tool", "content": "results"}]
+    assert main._used_web_search(msgs, 0)
+    assert not main._used_web_search([{"role": "assistant", "content": "hi"}], 0)
+
+
 def test_voice_never_speaks_code_and_estimates_duration():
     import voice
     code_reply = "Here is the function:\n```python\ndef f():\n    return 42\n```\nThat's it."
