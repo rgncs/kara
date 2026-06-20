@@ -64,6 +64,19 @@ _BARE_RETRACT = re.compile(r"(?i)^\W*(?:(?:actually|ok|okay|wait|no|um|hmm|oh|we
 _CONFIRM_BRIEF = "Confirm only that in one short sentence; do NOT list or summarize anything else you remember."
 
 
+# A follow-up that points back at the current conversation ("there", "that place").
+# On these, skip memory recall so an unrelated stored fact can't hijack the topic —
+# the conversation history (which the model sees) resolves the reference.
+_FOLLOWUP_REF = re.compile(r"(?i)\b(over there|in there|down there|up there|back there|"
+                           r"go(?:ing)? there|get(?:ting)? there|head(?:ing)? there|"
+                           r"eat(?:ing)? there|order(?:ing)? there|dine? there|"
+                           r"that place|this place|that one|this one|that spot|the place)\b")
+
+
+def _is_followup_reference(text: str) -> bool:
+    return bool(_FOLLOWUP_REF.search(text))
+
+
 def _is_memory_question(text: str) -> bool:
     return bool(_MEM_Q.search(text))
 
@@ -403,12 +416,16 @@ def process_turn(messages: list[dict], user_input: str, printer: "_Printer | Non
     """
     base_len = len(messages)  # index of this turn's user message / rollback point
 
-    # Recall memories (both scopes) for context.
-    try:
-        mems = recall(user_input)
-    except Exception as e:  # noqa: BLE001 — memory must never break chatting
-        log.debug("recall failed: %s", e)
+    # Recall memories (both scopes) for context — but NOT on a follow-up that refers to
+    # the current conversation ("what's good there?"), so a stray memory can't hijack it.
+    if _is_followup_reference(user_input):
         mems = []
+    else:
+        try:
+            mems = recall(user_input)
+        except Exception as e:  # noqa: BLE001 — memory must never break chatting
+            log.debug("recall failed: %s", e)
+            mems = []
 
     # Process this turn's memory intent BEFORE replying (save/delete/restore/ask), so
     # whatever Kara says about memory is accurate. Returns a note to inject for her.

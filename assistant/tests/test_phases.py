@@ -444,6 +444,17 @@ def test_clean_for_speech_strips_markup():
     assert "Imperial Peking duck" in spoken and "Wing Lei" in spoken
 
 
+def test_followup_reference_skips_memory():
+    import main
+    # references to the current conversation → memory recall is skipped
+    assert main._is_followup_reference("what should I get going there")
+    assert main._is_followup_reference("what's good at that place")
+    assert main._is_followup_reference("can I order there as one person")
+    # genuine personal questions are NOT follow-up references (memory still recalled)
+    assert not main._is_followup_reference("what should I get my girlfriend")
+    assert not main._is_followup_reference("remember my birthday is August 5")
+
+
 def test_deflection_detection_and_search_check():
     import main
     assert main._is_deflection("As my recent knowledge cutoff is 2025, I can't provide the most current information")
