@@ -445,32 +445,50 @@ def _get_voice_input(voice, hands_free: bool) -> str:
 def _voice_loop(messages: list[dict], label: str) -> None:
     import voice
     hands_free = config.VOICE_HANDS_FREE
+    timeout = config.VOICE_FOLLOWUP_TIMEOUT
     if hands_free:
-        print("Hands-free voice mode — start with \"hey Kara\" and she'll respond.")
-        print("Tap any key while she's talking to interrupt. "
-              "Say \"hey Kara, goodbye\" or press Ctrl-C to quit.\n")
+        print("Hands-free voice mode — say \"hey Kara\" to start, then just keep talking.")
+        print(f"After ~{timeout}s of silence she waits for \"hey Kara\" again. "
+              "Tap a key to interrupt; \"hey Kara, goodbye\" or Ctrl-C to quit.\n")
     else:
         print("Push-to-talk: Enter to start/stop talking ('t' to type). Ctrl-C to quit.\n")
 
+    active = False  # in an ongoing hands-free conversation (no wake word needed)
     while True:
         try:
-            user_input = _get_voice_input(voice, hands_free)
+            if not hands_free:
+                user_input = _get_voice_input(voice, hands_free)
+            elif active:
+                print("🎤 …", end="\r", flush=True)
+                user_input = voice.listen_vad(start_timeout=timeout)
+                print(" " * 24, end="\r", flush=True)
+                if user_input is None:        # silence → re-arm the wake word
+                    active = False
+                    print('  (paused — say "hey Kara" to continue)')
+                    continue
+            else:
+                print('🎤 say "hey Kara"…', end="\r", flush=True)
+                user_input = voice.listen_vad()
+                print(" " * 24, end="\r", flush=True)
         except (EOFError, KeyboardInterrupt):
             print("\nbye.")
             break
         if not user_input:
             continue
 
-        # Wake word (hands-free only): only respond when addressed as "hey kara".
+        # Wake word (hands-free): required to start; optional once the conversation is active.
         if hands_free:
             cmd = voice.strip_wake_word(user_input)
-            if cmd is None:
+            if cmd is not None:               # addressed with "hey Kara"
+                active = True
+                if not cmd:                   # just "hey Kara" with nothing after
+                    voice.speak_interruptible("Yes?")
+                    continue
+                user_input = cmd
+            elif not active:                  # no wake word and not in a conversation → ignore
                 log.debug("ignored (no wake word): %r", user_input)
                 continue
-            if not cmd:                       # just "hey kara" with nothing after
-                voice.speak_interruptible("Yes?")
-                continue
-            user_input = cmd
+            # else: active conversation, no wake word needed — use as-is
 
         print(f"you ▸ {user_input}")
         if _matches(user_input, ("exit", "quit", "stop", "goodbye", "goodbye kara", "bye")):

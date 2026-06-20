@@ -165,11 +165,12 @@ Talk to Kara and hear her replies — all local. Speech-to-text is Whisper
 kara --voice          # or: VOICE=1 kara
 ```
 
-**Hands-free (default):** Kara listens continuously but only responds when you address
-her with **"hey Kara"** (or "hey Cara", or any homophone Whisper produces — she doesn't
-fuss over the pronunciation). Everything after the wake word is your command. **Tap any
-key while she's talking to interrupt** — she stops instantly and listens. Say "hey Kara,
-goodbye" or press Ctrl-C to quit.
+**Hands-free (default):** say **"hey Kara"** to start (or "hey Cara", or any homophone
+Whisper produces — she doesn't fuss over the pronunciation). After that the conversation
+stays open — **just keep talking, no wake word needed** for the back-and-forth. If you go
+quiet for ~`VOICE_FOLLOWUP_TIMEOUT` seconds (default 10), she pauses and waits for "hey
+Kara" again. **Tap any key while she's talking to interrupt.** Say "hey Kara, goodbye" or
+press Ctrl-C to quit.
 
 Set `VOICE_HANDS_FREE=0` for classic **push-to-talk** (Enter to start/stop, `t` to
 type a turn).

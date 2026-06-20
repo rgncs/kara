@@ -318,10 +318,11 @@ def _is_speech(frame_i16, sample_rate) -> bool:
     return rms > 500.0  # ~ -36 dBFS; coarse fallback
 
 
-def listen_vad() -> str:
-    """Hands-free: open the mic, wait for speech, capture until the user stops
-    talking (trailing silence), then transcribe. Returns recognized text ('' if
-    nothing usable). Raises KeyboardInterrupt through to the caller on Ctrl-C."""
+def listen_vad(start_timeout: "float | None" = None) -> "str | None":
+    """Hands-free: open the mic, wait for speech, capture until the user stops talking
+    (trailing silence), then transcribe. Returns recognized text ('' if a blip was too
+    short to use). If `start_timeout` seconds pass with no speech beginning, returns
+    None. Raises KeyboardInterrupt through to the caller on Ctrl-C."""
     import numpy as np
     import sounddevice as sd
 
@@ -330,9 +331,10 @@ def listen_vad() -> str:
     n = int(sr * frame_ms / 1000)                       # samples per VAD frame
     need_start = max(1, config.VAD_START_MS // frame_ms)
     need_silence = max(1, config.VAD_SILENCE_MS // frame_ms)
+    max_wait = int(start_timeout * 1000 / frame_ms) if start_timeout else None
     preroll = deque(maxlen=need_start + 4)
 
-    voiced, triggered, speech_run, silence_run = [], False, 0, 0
+    voiced, triggered, speech_run, silence_run, waited = [], False, 0, 0, 0
     try:
         stream = sd.InputStream(samplerate=sr, channels=1, dtype="int16", blocksize=n)
     except Exception as e:  # noqa: BLE001 — usually missing mic permission
@@ -346,6 +348,9 @@ def listen_vad() -> str:
             frame = data[:, 0]
             speech = _is_speech(frame, sr)
             if not triggered:
+                if max_wait is not None and waited >= max_wait:
+                    return None                         # no speech within the timeout
+                waited += 1
                 preroll.append(frame)
                 speech_run = speech_run + 1 if speech else 0
                 if speech_run >= need_start:
