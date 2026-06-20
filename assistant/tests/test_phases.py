@@ -910,3 +910,32 @@ def test_calendar_time_resolution():
     assert parses(tmin) and parses(tmax)
     tmin, tmax = c._resolve_window(None, None, now)         # empty → now, no max
     assert parses(tmin) and tmax is None
+
+
+def test_chat_model_routing():
+    import llm
+    captured = {}
+    class _Resp: pass
+    with mock.patch.object(llm.client.chat.completions, "create",
+                           side_effect=lambda **kw: captured.update(kw) or _Resp()):
+        llm.chat([{"role": "user", "content": "hi"}])                       # default
+        assert captured["model"] == config.CHAT_MODEL
+        llm.chat([{"role": "user", "content": "hi"}], model=config.FAST_MODEL)
+        assert captured["model"] == config.FAST_MODEL
+        llm.chat([{"role": "user", "content": "hi"}], model=config.REASONING_MODEL)
+        assert captured["model"] == config.REASONING_MODEL
+
+
+def test_reasoning_think_tool():
+    from tools import reasoning
+    # the <think> chain-of-thought is stripped; only the conclusion remains
+    assert reasoning._strip_think("<think>long winded\nreasoning</think>  Answer: 42") == "Answer: 42"
+    assert reasoning._strip_think("no tags here") == "no tags here"
+    assert reasoning._strip_think("reasoning...</think>final") == "final"   # truncated trace
+    # registered as a tool for the controller to delegate to
+    from tools import TOOL_FUNCTIONS
+    assert "think" in TOOL_FUNCTIONS
+    # a failing reasoning model degrades to an ERROR string, never raises
+    with mock.patch.object(reasoning, "chat", side_effect=RuntimeError("model not pulled")):
+        out = reasoning.think("plan a refactor")
+        assert out.startswith("ERROR:") and "unavailable" in out

@@ -662,7 +662,7 @@ def _voice_summary(full_reply: str) -> str:
         resp = chat([
             {"role": "system", "content": "You rewrite text to be spoken aloud by a TTS voice."},
             {"role": "user", "content": instr + "\n\n---\n" + full_reply},
-        ], temperature=0)
+        ], temperature=0, model=config.FAST_MODEL)  # cheap rewrite → fast subagent model
         return (resp.choices[0].message.content or "").strip()
     except Exception as e:  # noqa: BLE001
         log.debug("voice summary failed: %s", e)
@@ -791,6 +791,10 @@ def main() -> None:
 
     messages: list[dict] = [_system_message()]
     print(f"{name} — local coding agent (model: {config.CHAT_MODEL})")
+    extra = f"fast: {config.FAST_MODEL}"
+    if config.REASONING_ENABLED:
+        extra += f"  ·  reasoning: {config.REASONING_MODEL}"
+    print(f"Subagents — {extra}")
     print(f"Workspace: {config.WORKSPACE_ROOT}")
     print(f"Shell approval: {config.COMMAND_APPROVAL}")
     mode = "voice" if use_voice else "text"

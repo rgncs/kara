@@ -34,6 +34,17 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 CHAT_MODEL = os.environ.get("CHAT_MODEL", "qwen3-coder:30b")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text")
 
+# --- Subagent models (model routing) -----------------------------------------
+# The main loop uses CHAT_MODEL. Cheap helper jobs (spoken summaries, rewrites)
+# route to a small fast model; genuinely hard planning can be delegated to a
+# reasoning model via the `think` tool (it emits a <think> trace that is stripped
+# before use). Both are loaded on demand by Ollama; missing ones degrade
+# gracefully (helper falls back, the tool returns an error) rather than crashing.
+FAST_MODEL = os.environ.get("FAST_MODEL", "qwen3.5:4b")
+REASONING_MODEL = os.environ.get("REASONING_MODEL", "deepseek-r1")
+# Expose the reasoning model to the main model as the `think` tool.
+REASONING_ENABLED = os.environ.get("REASONING", "1").lower() in {"1", "true", "yes"}
+
 # --- Coding agent workspace (Phase 2 coding tools) ---------------------------
 # File tools are confined to this root so the agent can't roam the whole disk.
 # Defaults to the directory the agent is launched from.

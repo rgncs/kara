@@ -37,6 +37,13 @@ if config.MEMORY_TOOL_ENABLED:
     TOOLS.append(memory_tool.SCHEMA)
     TOOL_FUNCTIONS["save_memory"] = memory_tool.save_memory
 
+# The reasoning subagent (`think`) lets the controller delegate hard problems to
+# config.REASONING_MODEL. On by default; disable with REASONING=0.
+if config.REASONING_ENABLED:
+    from . import reasoning
+    TOOLS.append(reasoning.SCHEMA)
+    TOOL_FUNCTIONS["think"] = reasoning.think
+
 # Google Calendar tools appear only when set up (credentials.json present) or forced
 # on with CALENDAR=1, so they don't clutter the tool list otherwise.
 if config.CALENDAR_ENABLED:
