@@ -60,6 +60,10 @@ _BARE_RETRACT = re.compile(r"(?i)^\W*(?:(?:actually|ok|okay|wait|no|um|hmm|oh|we
                            r"disregard (?:that|it)|delete the last)\W*$")
 
 
+# Appended to save/restore notes so Kara confirms only the one fact, not her whole memory.
+_CONFIRM_BRIEF = "Confirm only that in one short sentence; do NOT list or summarize anything else you remember."
+
+
 def _is_memory_question(text: str) -> bool:
     return bool(_MEM_Q.search(text))
 
@@ -188,7 +192,7 @@ def _handle_memory(user_input: str, mems: list[dict]) -> str:
             fact = _pending[1]
             _pending = None
             _save_facts([fact], scope=scope)
-            return f'[You just saved this to {_scope_label(scope)} memory: "{fact}". Confirm concisely.]'
+            return f'[You just saved that to {_scope_label(scope)} memory. {_CONFIRM_BRIEF}]'
         _pending = None
         if _is_forget(user_input) or _is_bare_retract(user_input):
             # "never mind" / "forget it" cancels the question — save nothing, delete nothing.
@@ -203,10 +207,10 @@ def _handle_memory(user_input: str, mems: list[dict]) -> str:
         if kind == "restore" and store.restore(p[1]):
             _last_saved = [p[1]]
             print(f"  · restored: {p[1]}")
-            return f'[You just restored this note to active memory: "{p[1]}". Confirm concisely.]'
+            return f'[You just restored this note: "{p[1]}". {_CONFIRM_BRIEF}]'
         if kind == "save":
             _save_facts([p[1]])  # default global
-            return f'[You just saved this to memory: "{p[1]}". Confirm concisely.]'
+            return f'[You just saved this: "{p[1]}". {_CONFIRM_BRIEF}]'
         if kind == "delete":
             _delete_match(p[1], p[2])
             mems[:] = [m for m in mems if m.get("text") != p[1]]  # don't show it as still-known
@@ -243,13 +247,13 @@ def _handle_memory(user_input: str, mems: list[dict]) -> str:
         if not facts:
             return ""
         scope = _memory_scope(user_input)
-        if scope is None:  # ambiguous → ask the user which scope, save nothing yet
+        if scope is None:  # ambiguous → ask which scope (ONE short question), save nothing yet
             _pending = ("scope", facts[0])
-            return ("[The user asked you to remember something but didn't say the scope. Ask whether "
-                    "to remember it FOREVER (everywhere, across all projects) or just for THIS "
-                    "project/directory. Do NOT claim it's saved yet — you're only asking.]")
+            return ('[Ask ONE short scope question and save nothing yet — exactly like: '
+                    '"Got it — forever, or just for this project?" Keep it that short; '
+                    "don't explain scopes or claim it's saved.]")
         _save_facts([_strip_scope_tail(f) for f in facts], scope=scope)
-        return f"[You just saved this to {_scope_label(scope)} memory. Confirm concisely.]"
+        return f"[You just saved that to {_scope_label(scope)} memory. {_CONFIRM_BRIEF}]"
 
     # Casual implicit self-fact → save globally, silently.
     _pending = None
@@ -272,9 +276,10 @@ def _memory_preface(mems: list[dict]) -> str:
         except Exception:  # noqa: BLE001
             lines.append(f"- {m['text']}")
     return (
-        "[Things you already know about me from earlier sessions — treat as true "
-        "and use them to answer directly; prefer the most recent date if any "
-        "conflict:\n" + "\n".join(lines) + "]"
+        "[Background you already know about me (treat as true; prefer the most recent "
+        "date if any conflict). Use it to answer, but do NOT list, recite, or summarize "
+        "these back to me unless I explicitly ask what you remember:\n"
+        + "\n".join(lines) + "]"
     )
 
 
