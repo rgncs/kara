@@ -839,16 +839,35 @@ def test_confirm_action_gate():
     approval.reset()
     # no confirmer registered (non-interactive) → fail safe to denied
     assert approval.confirm_action("do the thing?") is False
-    # a registered confirmer decides
-    approval.set_confirmer(lambda prompt: True)
+    # a registered confirmer decides (confirmer takes prompt + allow_always)
+    approval.set_confirmer(lambda prompt, allow_always=True: True)
     assert approval.confirm_action("do the thing?") is True
-    approval.set_confirmer(lambda prompt: False)
+    approval.set_confirmer(lambda prompt, allow_always=True: False)
     assert approval.confirm_action("do the thing?") is False
     # "yes to all" latches on for the session
     approval.confirm_auto()
     assert approval.confirm_action("anything now?") is True
     approval.reset()
     assert approval.confirm_action("back to denied?") is False
+
+
+def test_confirm_action_always_ask_cannot_be_suppressed():
+    """Calendar writes use always_ask=True: never auto-approved, never latched off."""
+    import approval
+    approval.reset()
+    seen = []  # records the allow_always flag passed to the confirmer
+    approval.set_confirmer(lambda prompt, allow_always=True: seen.append(allow_always) or False)
+    # auto-approve mode is IGNORED for always_ask actions
+    with mock.patch.object(config, "COMMAND_APPROVAL", "auto"):
+        assert approval.confirm_action("calendar write?", always_ask=True) is False  # still asked
+        assert approval.confirm_action("normal action?") is True   # normal action: auto short-circuits
+    # a prior "yes to all" does NOT suppress an always_ask action
+    approval.confirm_auto()
+    assert approval.confirm_action("normal?") is True              # latched on
+    assert approval.confirm_action("calendar write?", always_ask=True) is False  # still asks
+    # always_ask never offers "always" to the confirmer
+    assert seen and all(flag is False for flag in seen)
+    approval.reset()
 
 
 def test_calendar_skill_routes():

@@ -207,7 +207,7 @@ def create_event(summary: str, start: str, end: str,
     except Exception as e:  # noqa: BLE001
         return f"ERROR: {e}"
     if config.CALENDAR_CONFIRM_WRITES and not approval.confirm_action(
-            f"Create calendar event '{summary}' from {start} to {end}?"):
+            f"Create calendar event '{summary}' from {start} to {end}?", always_ask=True):
         return "DENIED: event not created (you declined)."
     tz = _calendar_tz(service)
     body = {"summary": summary,
@@ -230,7 +230,7 @@ def delete_event(event_id: str) -> str:
     except Exception as e:  # noqa: BLE001
         return f"ERROR: {e}"
     if config.CALENDAR_CONFIRM_WRITES and not approval.confirm_action(
-            f"Delete calendar event with id {event_id}?"):
+            f"Delete calendar event with id {event_id}?", always_ask=True):
         return "DENIED: event not deleted (you declined)."
     try:
         service.events().delete(calendarId=config.CALENDAR_ID, eventId=event_id).execute()

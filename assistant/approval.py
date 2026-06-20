@@ -83,17 +83,20 @@ def confirm_auto() -> None:
     _confirm_auto = True
 
 
-def confirm_action(prompt: str) -> bool:
+def confirm_action(prompt: str, always_ask: bool = False) -> bool:
     """Ask the user to confirm a non-shell outward action (e.g. a calendar write).
 
-    True in auto mode or once the user has said "always"; otherwise defers to the
-    registered confirmer. Fails safe to False when no confirmer is available.
+    With always_ask=True the action MUST be confirmed every single time: auto mode
+    and a prior "yes to all" are ignored, and "always" is not offered — there is no
+    way to suppress the prompt (used for calendar writes). Otherwise it short-circuits
+    to True in auto mode or once the user has said "always". Fails safe to False when
+    no confirmer is available.
     """
-    if config.COMMAND_APPROVAL == "auto" or _confirm_auto:
+    if not always_ask and (config.COMMAND_APPROVAL == "auto" or _confirm_auto):
         return True
     if _confirmer is None:
         return False
-    return bool(_confirmer(prompt))
+    return bool(_confirmer(prompt, not always_ask))
 
 
 def reset() -> None:

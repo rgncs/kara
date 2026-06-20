@@ -475,27 +475,31 @@ def _approve_command_voice(command: str) -> tuple[bool, str]:
     return False, "no clear answer — declined"
 
 
-def _confirm_action(prompt: str) -> bool:
-    """Text yes/no/always confirmation for an outward action (e.g. a calendar write)."""
+def _confirm_action(prompt: str, allow_always: bool = True) -> bool:
+    """Text confirmation for an outward action. When allow_always is False the
+    'yes to all' option is withheld, so the action is confirmed every time."""
     print(f"\n  ⚠  {prompt}")
+    opts = "  [y] yes   [n] no" + ("   [a] yes to all this session" if allow_always else "")
     try:
-        ans = input("  [y] yes   [n] no   [a] yes to all this session\n  > ").strip().lower()
+        ans = input(opts + "\n  > ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         print()
         return False
-    if ans in {"a", "all", "always"}:
+    if allow_always and ans in {"a", "all", "always"}:
         approval.confirm_auto()
         return True
     return ans in {"y", "yes"}
 
 
-def _confirm_action_voice(prompt: str) -> bool:
-    """Spoken yes/no/always confirmation for an outward action during a voice session."""
+def _confirm_action_voice(prompt: str, allow_always: bool = True) -> bool:
+    """Spoken confirmation for an outward action. With allow_always False, 'always'
+    is not offered or honored — the action is confirmed every time."""
     import voice
     print(f"\n  ⚠  {prompt}")
-    voice.speak_interruptible(f"{prompt} Say yes, no, or always.")
+    tail = "Say yes, no, or always." if allow_always else "Say yes or no."
+    voice.speak_interruptible(f"{prompt} {tail}")
     for _ in range(2):
-        print("  🎤 (say yes / no / always)…", end="\r", flush=True)
+        print("  🎤 (say yes / no" + (" / always" if allow_always else "") + ")…", end="\r", flush=True)
         try:
             ans = (voice.listen_vad(start_timeout=15) or "").lower()
         except (KeyboardInterrupt, EOFError):
@@ -504,7 +508,7 @@ def _confirm_action_voice(prompt: str) -> bool:
         if not ans:
             voice.speak_interruptible("I didn't catch that.")
             continue
-        if re.search(r"\b(always|every ?time|go ahead with everything|yes to all)\b", ans):
+        if allow_always and re.search(r"\b(always|every ?time|go ahead with everything|yes to all)\b", ans):
             approval.confirm_auto()
             return True
         if re.search(r"\b(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|please do|approve|sounds good)\b", ans):
