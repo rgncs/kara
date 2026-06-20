@@ -438,6 +438,10 @@ def test_clean_for_speech_strips_markup():
     assert "reverse()" in out            # inline code unwrapped
     assert "[1]" not in out              # citation marker dropped
     assert "https" not in out and "a link" in out
+    # non-Latin scripts (which the English voice can't read) are stripped, Latin kept
+    spoken = voice._clean_for_speech("Try the 帝皇北京烤鸭 (Imperial Peking duck) at Wing Lei")
+    assert "帝" not in spoken and "烤鸭" not in spoken
+    assert "Imperial Peking duck" in spoken and "Wing Lei" in spoken
 
 
 def test_voice_never_speaks_code_and_estimates_duration():

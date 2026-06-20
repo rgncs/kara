@@ -64,6 +64,10 @@ def _clean_for_speech(text: str) -> str:
     text = re.sub(r"\[(\d+)\]", r"", text)          # citation markers
     text = re.sub(r"[*_#>|]+", " ", text)           # markdown punctuation
     text = re.sub(r"https?://\S+", "a link", text)  # URLs are unspeakable
+    # Drop CJK / other non-Latin scripts the English voice can't read (espeak would
+    # otherwise say "Chinese letter" for each character).
+    text = re.sub(r"[　-〿぀-ヿ㐀-䶿一-鿿"
+                  r"豈-﫿가-힯＀-￯]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
 

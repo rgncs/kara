@@ -421,8 +421,9 @@ def _voice_summary(full_reply: str) -> str:
     from llm import chat
     instr = ("Summarize the assistant reply below for the SPOKEN word in about 75 "
              "words (~30 seconds), and never more than that. Start straight with the "
-             "content — no preamble like 'here's a summary'. Conversational plain "
-             "sentences, NO code, NO markdown, NO lists — just the key takeaways.")
+             "content — no preamble like 'here's a summary'. Write in ENGLISH only "
+             "(romanize any foreign names/dishes; no Chinese/Japanese/Korean characters). "
+             "Conversational plain sentences, NO code, NO markdown, NO lists — just the key takeaways.")
     try:
         resp = chat([
             {"role": "system", "content": "You rewrite text to be spoken aloud by a TTS voice."},
