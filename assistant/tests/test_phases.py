@@ -789,3 +789,46 @@ def test_agent_writes_and_runs_code(tmp_path):
         answer = agent_turn(messages)
     assert (tmp_path / "hello.py").exists()
     assert "HELLO_AGENT" in answer
+
+
+def test_skill_loading_and_matching():
+    import skills
+    loaded = skills.load_skills()
+    names = {s["name"] for s in loaded}
+    # the vetted skills ship and parse (frontmatter + body)
+    assert {"arxiv-summarizer", "code-review", "deep-research",
+            "data-to-spreadsheet", "git-commit"} <= names
+    for s in loaded:
+        assert s["body"] and s["triggers"]  # every skill has instructions + triggers
+
+    def matched(text):
+        return [s["name"] for s in skills.match_skills(text)]
+    # triggers route the right playbook in
+    assert "arxiv-summarizer" in matched("summarize recent papers on transformers")
+    assert "code-review" in matched("can you review this code for bugs")
+    assert "deep-research" in matched("do some research on vector databases")
+    assert "data-to-spreadsheet" in matched("put them in an excel spreadsheet")
+    assert "git-commit" in matched("commit these changes")
+    # unrelated turns pull in nothing
+    assert matched("how is the weather today") == []
+    # never exceed the per-turn cap
+    assert len(skills.match_skills("research and review this code then commit it")) \
+        <= config.MAX_SKILLS_PER_TURN
+
+
+def test_skill_preface_and_frontmatter_parsing(tmp_path):
+    import skills
+    (tmp_path / "demo.md").write_text(
+        "---\nname: demo\ndescription: A demo skill.\ntriggers: foobar, \\bwidget(s)?\\b\n"
+        "---\nDo the foobar thing in three steps.\n")
+    (tmp_path / "_hidden.md").write_text("---\nname: hidden\ntriggers: foobar\n---\nignored\n")
+    (tmp_path / "nofront.md").write_text("just text, no frontmatter\n")
+    loaded = skills.load_skills(str(tmp_path))
+    assert [s["name"] for s in loaded] == ["demo"]  # _hidden skipped, nofront rejected
+    m = skills.match_skills("please foobar this", skills=loaded)
+    assert [s["name"] for s in m] == ["demo"]
+    assert skills.match_skills("widget", skills=loaded)        # regex trigger compiles
+    assert skills.match_skills("nothing here", skills=loaded) == []
+    pre = skills.skills_preface(m)
+    assert "Skill: demo" in pre and "three steps" in pre
+    assert skills.skills_preface([]) == ""

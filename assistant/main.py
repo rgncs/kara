@@ -13,6 +13,7 @@ import sys
 import approval
 import config
 import history
+import skills
 from agent import agent_turn
 from health import preflight
 from memory import store
@@ -539,10 +540,19 @@ def process_turn(messages: list[dict], user_input: str, printer: "_Printer | Non
         log.debug("memory handling failed: %s", e)
         note = ""
 
+    # Match skill playbooks for this turn (markdown instructions folded in like memory).
+    try:
+        skill_block = skills.skills_preface(skills.match_skills(user_input))
+    except Exception as e:  # noqa: BLE001 — skills must never break chatting
+        log.debug("skill matching failed: %s", e)
+        skill_block = ""
+
     # Fold context into the user turn (transiently — restored to clean after).
     preface = _memory_preface(mems) if mems else ""
     if note:
         preface += ("\n" if preface else "") + note
+    if skill_block:
+        preface += ("\n" if preface else "") + skill_block
     messages.append({"role": "user", "content": user_input})
     if preface:
         messages[base_len]["content"] = preface + "\n\n" + user_input

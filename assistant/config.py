@@ -68,6 +68,17 @@ TRASH_TTL_DAYS = 365         # recently-deleted memories are purged for good aft
 # tool-calling is inconsistent; set MEMORY_TOOL=1 to also expose it.
 MEMORY_TOOL_ENABLED = os.environ.get("MEMORY_TOOL", "").lower() in {"1", "true", "yes"}
 
+# --- Skills (markdown playbooks) ---------------------------------------------
+# A skill is a vetted Markdown file with frontmatter (name/description/triggers)
+# holding step-by-step instructions for a task, loaded into a turn when its
+# triggers match. Inspired by OpenClaw/Anthropic Agent Skills, but skills are
+# PROSE only: they drive Kara's existing tools and never bypass the run_command
+# approval gate. Files live in SKILLS_DIR and are committed, not auto-installed.
+SKILLS_ENABLED = os.environ.get("SKILLS", "1").lower() in {"1", "true", "yes"}
+SKILLS_DIR = os.path.abspath(os.environ.get(
+    "SKILLS_DIR", os.path.join(os.path.dirname(__file__), "skills")))
+MAX_SKILLS_PER_TURN = int(os.environ.get("MAX_SKILLS_PER_TURN", "2"))
+
 # --- Web search (Phase 3) ----------------------------------------------------
 # Provider is swappable: "tavily" (cloud, LLM-optimized) or "searxng" (self-hosted).
 SEARCH_PROVIDER = os.environ.get("SEARCH_PROVIDER", "tavily").lower()
