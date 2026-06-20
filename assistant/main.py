@@ -68,10 +68,20 @@ _CONFIRM_BRIEF = "Confirm only that in one short sentence; do NOT list or summar
 # A follow-up that points back at the current conversation ("there", "that place").
 # On these, skip memory recall so an unrelated stored fact can't hijack the topic —
 # the conversation history (which the model sees) resolves the reference.
-_FOLLOWUP_REF = re.compile(r"(?i)\b(over there|in there|down there|up there|back there|"
-                           r"go(?:ing)? there|get(?:ting)? there|head(?:ing)? there|"
-                           r"eat(?:ing)? there|order(?:ing)? there|dine? there|"
-                           r"that place|this place|that one|this one|that spot|the place)\b")
+_FOLLOWUP_REF = re.compile(
+    r"(?i)("
+    r"\bover there\b|\bin there\b|\bdown there\b|\bup there\b|\bback there\b|"
+    r"\bgo(?:ing)? there\b|\bget(?:ting)? there\b|\bhead(?:ing)? there\b|"
+    r"\beat(?:ing)? there\b|\border(?:ing)? there\b|\bdine? there\b|"
+    r"\bthat place\b|\bthis place\b|\bthat one\b|\bthis one\b|\bthat spot\b|\bthe place\b|"
+    # "put them in a spreadsheet", "save those", "list the results" — acting on prior content
+    r"\b(?:put|save|add|list|sort|organi[sz]e|export|include|write|format|arrange|rank|"
+    r"compile|tabulate|turn|make)\b[^.?!]*?\b(?:them|those|these|the (?:list|results?|ones|"
+    r"rest|names?|items?|options?))\b|"
+    # "...in an excel sheet / spreadsheet / csv / table / file" — a data-export destination
+    r"\b(?:in|into|to|on|as)\b\s+(?:an?|the)?\s*(?:excel|spread ?sheet|sheet|csv|table|"
+    r"file|document|doc)\b"
+    r")")
 
 
 def _is_followup_reference(text: str) -> bool:
@@ -322,7 +332,10 @@ def _memory_preface(mems: list[dict]) -> str:
         "if any conflict). Use an item ONLY if it directly answers my CURRENT message. Do "
         "NOT list or recite these back, and do NOT tack reminders, to-dos, suggestions, or "
         "personal details onto a reply about something else — answer only what I asked and "
-        "stay on topic:\n" + "\n".join(lines) + "]"
+        "stay on topic. This is NOT data I just gave you, so never write it into a file, "
+        "spreadsheet, or document — if I ask you to save or export 'them'/'those'/'the "
+        "results', that refers to what we were just discussing in the conversation, not this "
+        "background:\n" + "\n".join(lines) + "]"
     )
 
 

@@ -450,9 +450,17 @@ def test_followup_reference_skips_memory():
     assert main._is_followup_reference("what should I get going there")
     assert main._is_followup_reference("what's good at that place")
     assert main._is_followup_reference("can I order there as one person")
+    # acting on prior-conversation content (export/pronoun) → skip recall so stored
+    # personal memory can't be dumped in place of the actual list
+    assert main._is_followup_reference("Can you put them in an excel sheet?")
+    assert main._is_followup_reference("save those to a spreadsheet")
+    assert main._is_followup_reference("list the results")
+    assert main._is_followup_reference("export them as a csv")
     # genuine personal questions are NOT follow-up references (memory still recalled)
     assert not main._is_followup_reference("what should I get my girlfriend")
     assert not main._is_followup_reference("remember my birthday is August 5")
+    assert not main._is_followup_reference("what do you remember about my girlfriend")
+    assert not main._is_followup_reference("what do you know about Wontaek")
     # conversation-recap requests also skip memory (summarize the chat, not background)
     assert main._is_conversation_recap("what have we been talking about?")
     assert main._is_conversation_recap("can you recap our conversation")
