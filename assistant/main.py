@@ -91,6 +91,18 @@ def _is_conversation_recap(text: str) -> bool:
     return bool(_RECAP.search(text))
 
 
+# A request/question, not a personal statement — skip casual fact extraction on these so
+# content like "write a letter that says I love him" isn't saved as a fake preference.
+_REQUEST = re.compile(r"(?i)^\s*(?:can|could|would|will|please|are you|could you|would you|"
+                      r"will you|write|create|make|draft|compose|generate|build|give me|show me|"
+                      r"help me|tell me|find|search|look up|do you|how|what|who|whom|when|where|"
+                      r"why|which|whose|is|are|do|does|did|should)\b|\?\s*$")
+
+
+def _is_request(text: str) -> bool:
+    return bool(_REQUEST.search(text))
+
+
 def _is_memory_question(text: str) -> bool:
     return bool(_MEM_Q.search(text))
 
@@ -282,9 +294,11 @@ def _handle_memory(user_input: str, mems: list[dict]) -> str:
         _save_facts([_strip_scope_tail(f) for f in facts], scope=scope)
         return f"[You just saved that to {_scope_label(scope)} memory. {_CONFIRM_BRIEF}]"
 
-    # Casual implicit self-fact → save globally, silently.
+    # Casual implicit self-fact → save globally, silently — but NOT from a request or
+    # question (so "write a letter that says I love him" isn't saved as a preference).
     _pending = None
-    _save_facts(extract_facts(user_input), scope="global")
+    if not _is_request(user_input):
+        _save_facts(extract_facts(user_input), scope="global")
     return ""
 
 
@@ -317,7 +331,11 @@ _DEFLECT = re.compile(
     r"don'?t have (?:access to |the )?(?:the )?(?:most )?(?:up.?to.?date|current|real.?time|latest)|"
     r"can'?t provide the most current|may be outdated|might be out ?of ?date|"
     r"check (?:their|the)? ?(?:current|latest|recent) (?:website|reviews?|menu|info|information|prices?)|"
-    r"i'?d (?:suggest|recommend) (?:checking|looking))")
+    r"i'?d (?:suggest|recommend) (?:checking|looking)|"
+    r"(?:i'?m |i am )?not familiar with|never heard of|"
+    r"(?:i'?m |i am )?not aware of (?:any|a|an|the)|"
+    r"don'?t have (?:any )?information (?:on|about)|"
+    r"(?:un)?able to find any information)")
 
 
 def _is_deflection(text: str) -> bool:
@@ -385,6 +403,34 @@ def _approve_command(command: str) -> tuple[bool, str]:
     if ans in {"y", "yes"}:
         return True, "approved by user"
     return False, "declined by user"
+
+
+def _approve_command_voice(command: str) -> tuple[bool, str]:
+    """Spoken approval for run_command during a hands-free voice session: Kara reads
+    the request and you answer out loud (yes / no / always)."""
+    import voice
+    print(f"\n  ⚠  the agent wants to run a shell command:\n      {command}")
+    spoken = command if len(command) <= 80 else "a shell command, shown on your screen"
+    voice.speak_interruptible(f"I'd like to run {spoken}. Should I? Say yes, no, or always.")
+    for _ in range(2):
+        print("  🎤 (say yes / no / always)…", end="\r", flush=True)
+        try:
+            ans = (voice.listen_vad(start_timeout=15) or "").lower()
+        except (KeyboardInterrupt, EOFError):
+            return False, "cancelled"
+        print(" " * 34, end="\r", flush=True)
+        if not ans:
+            voice.speak_interruptible("I didn't catch that.")
+            continue
+        if re.search(r"\b(always|every ?time|all (?:commands|of them)|go ahead with everything)\b", ans):
+            approval.approve_session()
+            return True, "approved (all commands this session)"
+        if re.search(r"\b(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|please do|approve|sounds good)\b", ans):
+            return True, "approved by voice"
+        if re.search(r"\b(no|nope|nah|don'?t|do not|deny|stop|cancel|skip)\b", ans):
+            return False, "declined by voice"
+        voice.speak_interruptible("Was that a yes or a no?")
+    return False, "no clear answer — declined"
 
 
 def _setup_logging() -> None:
@@ -623,7 +669,7 @@ def main() -> None:
         log.debug("trash purge failed: %s", e)
 
     if config.COMMAND_APPROVAL == "prompt":
-        approval.set_approver(_approve_command)
+        approval.set_approver(_approve_command_voice if use_voice else _approve_command)
 
     name = config.AGENT_NAME
     label = name.lower()  # prompt label, e.g. "kara ▸"

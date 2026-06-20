@@ -458,6 +458,12 @@ def test_followup_reference_skips_memory():
     assert main._is_conversation_recap("can you recap our conversation")
     assert main._is_conversation_recap("remind me what we discussed")
     assert not main._is_conversation_recap("what is my girlfriend's name")
+    # requests/questions skip casual fact extraction (no fake saves from task content)
+    assert main._is_request("are you able to write a letter that says I love him")
+    assert main._is_request("can you create an excel file")
+    assert main._is_request("what is my name?")
+    assert not main._is_request("I prefer dark mode")
+    assert not main._is_request("my name is Bob")
 
 
 def test_deflection_detection_and_search_check():
@@ -465,6 +471,11 @@ def test_deflection_detection_and_search_check():
     assert main._is_deflection("As my recent knowledge cutoff is 2025, I can't provide the most current information")
     assert main._is_deflection("I'd suggest checking their current website or recent reviews")
     assert main._is_deflection("My data may be outdated")
+    # broadened: factual-knowledge gaps should also force a search
+    assert main._is_deflection("I'm not familiar with that library")
+    assert main._is_deflection("I've never heard of that framework")
+    assert main._is_deflection("I don't have information about that company")
+    assert main._is_deflection("I'm unable to find any information on it")
     assert not main._is_deflection("Wing Lei serves Peking duck and dim sum.")
     # detects a web_search tool call among this turn's messages
     msgs = [{"role": "user", "content": "q"},
