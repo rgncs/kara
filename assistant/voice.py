@@ -61,9 +61,14 @@ def _clean_for_speech(text: str) -> str:
     code aloud; she points to the printed version instead."""
     text = re.sub(r"```.*?```", " . I've put the code on your screen. . ", text, flags=re.DOTALL)
     text = re.sub(r"`([^`]*)`", r"\1", text)        # inline code -> bare word
-    text = re.sub(r"\[(\d+)\]", r"", text)          # citation markers
+    # Trailing "[1] https://…" reference list: don't read URLs aloud — just note
+    # that references are on screen.
+    text, n_refs = re.subn(r"(?m)^\s*\[\d+\]\s+https?://\S+.*$", "", text)
+    text = re.sub(r"\[(\d+)\]", r"", text)          # inline citation markers
     text = re.sub(r"[*_#>|]+", " ", text)           # markdown punctuation
-    text = re.sub(r"https?://\S+", "a link", text)  # URLs are unspeakable
+    text = re.sub(r"https?://\S+", "a link", text)  # any stray URLs are unspeakable
+    if n_refs:
+        text = text.rstrip() + " . References provided."
     # Drop CJK / other non-Latin scripts the English voice can't read (espeak would
     # otherwise say "Chinese letter" for each character).
     text = re.sub(r"[　-〿぀-ヿ㐀-䶿一-鿿"
