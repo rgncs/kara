@@ -939,3 +939,31 @@ def test_reasoning_think_tool():
     with mock.patch.object(reasoning, "chat", side_effect=RuntimeError("model not pulled")):
         out = reasoning.think("plan a refactor")
         assert out.startswith("ERROR:") and "unavailable" in out
+
+
+def test_identity_questions_get_fixed_answer():
+    import main
+    # identity / origin / tech questions are detected...
+    for q in ["what are you", "who created you", "who built you", "what are you made of",
+              "what technologies are you made of", "what llm are you", "what kind of ai are you",
+              "how were you built", "what's your tech stack", "are you an llm"]:
+        assert main._is_identity_question(q), q
+    # ...and ordinary "what/who are you ..." activity questions are NOT
+    for q in ["what are you doing", "what are you up to", "what are you cooking",
+              "who are you meeting today", "who are you talking to", "what time is it",
+              "what model car should i buy", "are you free tuesday"]:
+        assert not main._is_identity_question(q), q
+    # process_turn answers from a variation without calling the model
+    msgs = [{"role": "system", "content": "sys"}]
+    reply = main.process_turn(msgs, "what are you made of?")
+    assert reply in main._IDENTITY_ANSWERS
+    # the exchange is recorded in history (user + assistant), no tool/model round-trip
+    assert msgs[-1]["role"] == "assistant" and msgs[-1]["content"] == reply
+    # several variations to rotate, each carrying the core tech facts...
+    assert len(main._IDENTITY_ANSWERS) >= 3
+    for ans in main._IDENTITY_ANSWERS:
+        for token in ("Python", "Gemma", "Qwen3", "DeepSeek"):
+            assert token in ans, (token, ans)
+    # ...but Wontaek Shin is mentioned in only some, not every time
+    credited = [a for a in main._IDENTITY_ANSWERS if "Wontaek Shin" in a]
+    assert 0 < len(credited) < len(main._IDENTITY_ANSWERS)

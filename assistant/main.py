@@ -123,6 +123,59 @@ def _is_conversation_recap(text: str) -> bool:
     return bool(_RECAP.search(text))
 
 
+# Identity / origin / "what are you made of" questions get a fixed, accurate answer
+# (qwen otherwise improvises — claims to be a single model, or a person). Detected in
+# code so the answer is consistent every time, not left to the model.
+_IDENTITY = re.compile(
+    r"(?i)("
+    r"\bwho\s+(?:made|created|built|design(?:ed)?|wrote|programmed|develop(?:ed)?)\s+you\b"
+    r"|\bwho\s+are\s+you\b(?!\s+(?:meeting|seeing|talking|speaking|calling|visiting|going|"
+    r"bringing|taking|inviting|texting|emailing|gonna|with|to|for))"
+    r"|\bwhat\s+are\s+you\s*\??\s*$"
+    r"|\bwhat(?:'?s|\s+is|\s+are)\s+your?\b[^?]*\b(?:made\s+(?:of|from)|built\s+(?:with|from|on)|"
+    r"tech|technolog\w*|stack|llm|llms|model|models|architecture|composed|running\s+on|"
+    r"powered\s+by|written\s+in|run\s+on)\b"
+    r"|\bwhat\s+(?:kind|type|sort)\s+of\s+(?:ai|a\.?i\.?|model|llm|system|program|software|bot|"
+    r"assistant|thing)\s+(?:are|is)\s+you\b"
+    r"|\bwhat\s+(?:technolog\w*|tech|llm|llms|model|models|stack)\b[^?]*\byou\b"
+    r"|\bhow\s+(?:were|are|was)\s+you\s+(?:made|built|created|designed)\b"
+    r"|\bwhat\s+(?:ai|llm|model)\s+are\s+you\b"
+    r"|\bare\s+you\s+(?:an?\s+)?(?:ai|a\.?i\.?|llm|gpt|chat\s?gpt|claude|gemini|language\s+model)\b"
+    r")")
+
+# Several phrasings of the same answer so identity questions don't sound canned; one
+# is picked at random each time. Every variation keeps the core facts — Python
+# infrastructure representing agents over a blend of stateless open-source LLMs
+# (Gemma/Qwen3/DeepSeek) with voice/skills/context/conversation/memory tooling — but
+# only SOME credit Wontaek Shin, so he isn't named every single time.
+_IDENTITY_ANSWERS = (
+    "I'm primarily Python code that provides the infrastructure and represents agents that "
+    "access a blend of stateless, open-source LLMs — like Gemma, Qwen3, and DeepSeek. The "
+    "tooling around voice, skills, context, conversation, and memory was put together by "
+    "Wontaek Shin.",
+    "At my core I'm Python — infrastructure that wires together agents running on a mix of "
+    "stateless, open-source models like Qwen3, Gemma, and DeepSeek, with layers for voice, "
+    "skills, memory, context, and conversation built around them.",
+    "Mostly Python code. I represent agents that draw on several stateless open-source LLMs "
+    "— Gemma, Qwen3, and DeepSeek — wrapped in tooling for voice, skills, context, "
+    "conversation, and memory.",
+    "Think of me as Python infrastructure in front of a blend of open-source, stateless "
+    "language models — Qwen3, Gemma, DeepSeek. The voice, memory, skills, context, and "
+    "conversation tooling around them is Wontaek Shin's work.",
+    "I'm built mostly in Python — the scaffolding that lets agents tap a blend of stateless, "
+    "open-source LLMs such as Gemma, Qwen3, and DeepSeek, with everything around them — "
+    "voice, skills, context, conversation, memory — layered on top.",
+)
+
+
+def _identity_answer() -> str:
+    return random.choice(_IDENTITY_ANSWERS)
+
+
+def _is_identity_question(text: str) -> bool:
+    return bool(_IDENTITY.search(text or ""))
+
+
 # A request/question, not a personal statement — skip casual fact extraction on these so
 # content like "write a letter that says I love him" isn't saved as a fake preference.
 _REQUEST = re.compile(r"(?i)^\s*(?:can|could|would|will|please|are you|could you|would you|"
@@ -561,6 +614,18 @@ def process_turn(messages: list[dict], user_input: str, printer: "_Printer | Non
     the turn errored (already reported). Mutates `messages` (history) in place.
     """
     base_len = len(messages)  # index of this turn's user message / rollback point
+
+    # Identity / origin / "what are you made of" → answer from the fixed description, not
+    # the model (which improvises). Recorded in history so follow-ups have context.
+    if _is_identity_question(user_input):
+        answer = _identity_answer()
+        messages.append({"role": "user", "content": user_input})
+        messages.append({"role": "assistant", "content": answer})
+        history.trim(messages)
+        if printer:
+            printer.write(answer)
+            printer.finish()
+        return answer
 
     # Recall memories (both scopes) for context — but NOT on a follow-up that refers to
     # the current conversation ("what's good there?") or a recap request ("what have we
