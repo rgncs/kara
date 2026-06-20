@@ -15,9 +15,15 @@ strings; agent_turn surfaces raised exceptions as "ERROR: ..." to the model.
 import os
 import signal
 import subprocess
+import sys
 
 import approval
 import config
+
+# Put Kara's own venv first on PATH so `python`/`pip` in run_command resolve to the
+# interpreter that has Kara's dependencies (openpyxl, python-docx, pandas, …).
+_ENV = os.environ.copy()
+_ENV["PATH"] = os.path.dirname(sys.executable) + os.pathsep + _ENV.get("PATH", "")
 
 
 def _resolve(path: str) -> str:
@@ -80,7 +86,7 @@ def run_command(command: str) -> str:
     # start_new_session=True puts the shell in its own process group so a timeout
     # can kill any grandchildren it spawned, not just the shell itself.
     proc = subprocess.Popen(
-        command, shell=True, cwd=config.WORKSPACE_ROOT, text=True,
+        command, shell=True, cwd=config.WORKSPACE_ROOT, text=True, env=_ENV,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
     )
     try:

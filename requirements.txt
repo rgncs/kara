@@ -9,6 +9,10 @@ beautifulsoup4>=4.12
 # Phase 4 (long-term memory)
 chromadb>=0.5
 
+# Office documents — Kara writes real .xlsx (formulas/formatting) and .docx files
+openpyxl>=3.1
+python-docx>=1.1
+
 # Phase 5 (voice) — local STT (Whisper) + neural TTS (Piper); `say` is the fallback
 faster-whisper>=1.0
 sounddevice>=0.4
