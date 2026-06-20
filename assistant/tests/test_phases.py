@@ -501,7 +501,14 @@ def test_deflection_detection_and_search_check():
     assert main._is_deflection("I've never heard of that framework")
     assert main._is_deflection("I don't have information about that company")
     assert main._is_deflection("I'm unable to find any information on it")
+    # deflecting to the injected background instead of searching the web
+    assert main._is_deflection("Based on the background information provided, there is no specific information about the World Cup")
+    assert main._is_deflection("That isn't included in the provided background, so I would need to search for current information")
+    assert main._is_deflection("The background notes don't contain this information")
+    assert main._is_deflection("I cannot provide details about South Korea's World Cup performance")
     assert not main._is_deflection("Wing Lei serves Peking duck and dim sum.")
+    assert not main._is_deflection("The background music in the film was composed by Hans Zimmer.")
+    assert not main._is_deflection("South Korea beat Germany 2-0 in their last group match [1].")
     # detects a web_search tool call among this turn's messages
     msgs = [{"role": "user", "content": "q"},
             {"role": "assistant", "tool_calls": [{"function": {"name": "web_search"}}]},

@@ -369,7 +369,14 @@ _DEFLECT = re.compile(
     r"(?:i'?m |i am )?not familiar with|never heard of|"
     r"(?:i'?m |i am )?not aware of (?:any|a|an|the)|"
     r"don'?t have (?:any )?information (?:on|about)|"
-    r"(?:un)?able to find any information)")
+    r"(?:un)?able to find any information|"
+    # deflecting to the injected memory instead of searching the web
+    r"based on the (?:background|provided|available)\b|"
+    r"in (?:the |my |your )?(?:provided |given )?background\b|"
+    r"(?:provided |background )(?:notes?|information|details?|knowledge)\b|"
+    r"(?:do(?:es)?n'?t|don'?t|do not|does not|isn'?t|is not) (?:contain|include|have|mention)\b[^.?!]*\b(?:background|information)|"
+    r"(?:i )?would need to (?:search|look|find|check|consult)|"
+    r"i can(?:'?t|not) provide (?:details?|information|specifics?)\b)")
 
 
 def _is_deflection(text: str) -> bool:
