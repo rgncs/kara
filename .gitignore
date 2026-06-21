@@ -20,6 +20,9 @@ voices/
 credentials.json
 token.json
 
+# Kara's creator-set identity facts (birthday, birthplace)
+kara_self.json
+
 # Spam-scan log + keep / auto-delete lists + resume checkpoint (hold sender addresses)
 spam_candidates.json
 spam_keep.json

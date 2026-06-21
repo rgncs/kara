@@ -14,6 +14,7 @@ import time
 import approval
 import config
 import history
+import self_facts
 import skills
 from agent import agent_turn
 from health import preflight
@@ -254,11 +255,21 @@ def _creator_answer() -> str:
 
 
 def _age_answer() -> str:
+    # A creator-set birthday overrides the "no birth date" default.
+    bday = self_facts.get("birthday")
+    if bday:
+        return random.choice((f"My birthday is {bday}.",
+                              f"I was born on {bday}.",
+                              f"You set my birthday as {bday}."))
     return random.choice(_AGE_ANSWERS)
 
 
 def _birthplace_answer() -> str:
-    return random.choice(_BIRTHPLACE_YOU_ANSWERS)
+    place = self_facts.get("birthplace") or _AI_BIRTHPLACE
+    return random.choice((
+        f"I was born in {place} — that's where Wontaek Shin built me.",
+        f"{place} is my birthplace; that's where my creator, Wontaek Shin, put me together.",
+        f"I come from {place}, where I was first built."))
 
 
 def _creator_origin_answer() -> str:
@@ -285,6 +296,30 @@ def _is_identity_question(text: str) -> bool:
     text = text or ""
     return bool(_CREATOR.search(text) or _CREATOR_ORIGIN.search(text)
                 or _BIRTHPLACE_YOU.search(text) or _AGE.search(text) or _IDENTITY.search(text))
+
+
+# The creator TEACHING Kara a fact about ITSELF ("you were born on June 20th, 2026",
+# "your birthday is …"). Captured into the self-facts store (overrides the canned
+# answer) instead of being filed as a fact about the user. Value runs to a sentence
+# end or a trailing "can you remember / forever" tail.
+_VAL = r"(.+?)(?:\s*[.?!]|\s+(?:can you|could you|would you|please|and remember|remember|forever)\b|$)"
+_SELF_FACTS = (
+    ("birthday", re.compile(r"(?i)\byou\s+(?:were|was)\s+born\s+on\s+" + _VAL)),
+    ("birthday", re.compile(r"(?i)\byour\s+birth\s*day\s+(?:is|was|'?s)\s+" + _VAL)),
+    ("birthplace", re.compile(r"(?i)\byou\s+(?:were|was)\s+born\s+in\s+" + _VAL)),
+    ("birthplace", re.compile(r"(?i)\byour\s+(?:birthplace|hometown)\s+(?:is|was|'?s)\s+" + _VAL)),
+)
+
+
+def _capture_self_fact(text: str) -> "tuple[str, str] | None":
+    """If the user is setting one of Kara's own facts, return (key, value)."""
+    for key, rx in _SELF_FACTS:
+        m = rx.search(text or "")
+        if m:
+            val = m.group(1).strip().strip(".,!?").strip()
+            if val:
+                return key, val
+    return None
 
 
 # A short reaction/follow-up to the previous answer ("Really?", "Are you sure?", "Why?").
@@ -741,6 +776,22 @@ def process_turn(messages: list[dict], user_input: str, printer: "_Printer | Non
     the turn errored (already reported). Mutates `messages` (history) in place.
     """
     base_len = len(messages)  # index of this turn's user message / rollback point
+
+    # The creator setting one of Kara's OWN facts ("you were born on …") → store it as a
+    # self-fact (overrides the canned answer) instead of filing it as a fact about the
+    # user. Persisted, so it survives across sessions.
+    _self = _capture_self_fact(user_input)
+    if _self:
+        key, val = _self
+        self_facts.set_fact(key, val)
+        answer = f"Got it — I'll remember my {key} is {val}."
+        messages.append({"role": "user", "content": user_input})
+        messages.append({"role": "assistant", "content": answer})
+        history.trim(messages)
+        if printer:
+            printer.write(answer)
+            printer.finish()
+        return answer
 
     # Identity / origin / "what are you made of" → answer from the fixed description, not
     # the model (which improvises). Recorded in history so follow-ups have context.

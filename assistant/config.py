@@ -34,6 +34,12 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 CHAT_MODEL = os.environ.get("CHAT_MODEL", "qwen3-coder:30b")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text")
 
+# Kara's OWN identity facts that the creator can set (birthday, birthplace) — they
+# override the built-in defaults. Persisted here (gitignored, user-customized state),
+# separate from the user-fact memory store.
+SELF_FACTS_PATH = os.path.abspath(os.environ.get(
+    "SELF_FACTS_PATH", os.path.join(os.path.dirname(__file__), "..", "kara_self.json")))
+
 # --- Subagent models (model routing) -----------------------------------------
 # The main loop uses CHAT_MODEL. Cheap helper jobs (spoken summaries, rewrites)
 # route to a small fast model; genuinely hard planning can be delegated to a

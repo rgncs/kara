@@ -1415,3 +1415,31 @@ def test_short_reaction_steers_to_last_topic():
             mock.patch.object(main, "recall", lambda q: []):
         main.process_turn(msgs2, "what is the capital of France?")
     assert "short reaction" not in captured["turn"]
+
+
+def test_self_facts_override_canned_identity(tmp_path):
+    import importlib, config, main, self_facts
+    with mock.patch.object(config, "SELF_FACTS_PATH", str(tmp_path / "self.json")):
+        importlib.reload(self_facts)
+        # capture: the creator teaching Kara its own facts
+        assert main._capture_self_fact("You were born on June 20th, 2026. Can you remember that forever?") \
+            == ("birthday", "June 20th, 2026")
+        assert main._capture_self_fact("your birthday is July 1") == ("birthday", "July 1")
+        assert main._capture_self_fact("you were born in Tokyo") == ("birthplace", "Tokyo")
+        # NOT a self-fact: a question, or a fact about the user
+        assert main._capture_self_fact("when were you born?") is None
+        assert main._capture_self_fact("I was born in Daegu") is None
+
+        def fake_agent(messages, on_token=None):
+            return "x"
+        msgs = [{"role": "system", "content": "sys"}]
+        with mock.patch.object(main, "agent_turn", fake_agent), \
+                mock.patch.object(main, "recall", lambda q: []):
+            # setting it returns a confirmation and persists (NOT a user-memory save)
+            r = main.process_turn(msgs, "You were born on June 20th, 2026. Remember that forever.")
+            assert "birthday is June 20th, 2026" in r
+            assert self_facts.get("birthday") == "June 20th, 2026"
+            # asking now reports the taught birthday, not the canned "no birth date"
+            r2 = main.process_turn(msgs, "So when were you born?")
+            assert "June 20th, 2026" in r2 and "don't have a birth" not in r2.lower()
+    importlib.reload(self_facts)
