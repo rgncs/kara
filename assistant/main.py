@@ -287,6 +287,22 @@ def _is_identity_question(text: str) -> bool:
                 or _BIRTHPLACE_YOU.search(text) or _AGE.search(text) or _IDENTITY.search(text))
 
 
+# A short reaction/follow-up to the previous answer ("Really?", "Are you sure?", "Why?").
+# The whole message is the reaction (anchored), so longer questions don't match. These
+# refer to the LAST topic — the model otherwise drifts (e.g. into an identity spiel), so
+# we steer it back to the current subject.
+_REACTION = re.compile(
+    r"(?i)^\s*(?:"
+    r"really|seriously|for real|no way|wait\s*,?\s*what|are you sure|you sure|"
+    r"is that (?:right|true|correct|so)|says who|how come|how do you know|why|"
+    r"oh\s*really|hmm+|huh|what|wow|whoa|that(?:'s| is)\s+(?:surprising|interesting|crazy|wild)"
+    r")[\s,.!?]*$")
+
+
+def _is_short_reaction(text: str) -> bool:
+    return bool(_REACTION.search(text or ""))
+
+
 # A request/question, not a personal statement — skip casual fact extraction on these so
 # content like "write a letter that says I love him" isn't saved as a fake preference.
 _REQUEST = re.compile(r"(?i)^\s*(?:can|could|would|will|please|are you|could you|would you|"
@@ -752,7 +768,8 @@ def process_turn(messages: list[dict], user_input: str, printer: "_Printer | Non
     # Recall memories (both scopes) for context — but NOT on a follow-up that refers to
     # the current conversation ("what's good there?") or a recap request ("what have we
     # been talking about?"), so a stray memory can't hijack or pollute the answer.
-    if _is_followup_reference(user_input) or _is_conversation_recap(user_input):
+    if (_is_followup_reference(user_input) or _is_conversation_recap(user_input)
+            or _is_short_reaction(user_input)):
         mems = []
     else:
         try:
@@ -778,12 +795,25 @@ def process_turn(messages: list[dict], user_input: str, printer: "_Printer | Non
         log.debug("skill matching failed: %s", e)
         skill_block = ""
 
+    # A short reaction ("Really?", "Why?") refers to the LAST topic — steer the model to
+    # stay on it instead of drifting (e.g. into an identity spiel).
+    reaction_steer = ""
+    if _is_short_reaction(user_input) and any(
+            m.get("role") == "assistant" for m in messages[:base_len]):
+        reaction_steer = (
+            "[This is a short reaction to your PREVIOUS answer — stay on that exact same "
+            "topic and respond to it (confirm it, justify it, cite a source, or elaborate; "
+            "re-check the fact with web_search if useful). Do NOT switch subjects, and do "
+            "NOT start talking about yourself or who made you.]")
+
     # Fold context into the user turn (transiently — restored to clean after).
     preface = _memory_preface(mems) if mems else ""
     if note:
         preface += ("\n" if preface else "") + note
     if skill_block:
         preface += ("\n" if preface else "") + skill_block
+    if reaction_steer:
+        preface += ("\n" if preface else "") + reaction_steer
     messages.append({"role": "user", "content": user_input})
     if preface:
         messages[base_len]["content"] = preface + "\n\n" + user_input

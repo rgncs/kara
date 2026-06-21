@@ -1375,3 +1375,37 @@ def test_spam_batched_scan_checkpoints_and_resumes(tmp_path):
         assert {c["sender"] for c in cands} == {"deals@spam.com", "kevin@work.com"}
         assert dict((c["sender"], c["count"]) for c in cands)["deals@spam.com"] == 600
     importlib.reload(spam)
+
+
+def test_short_reaction_steers_to_last_topic():
+    import main
+    # whole-message reactions are detected; longer questions are not
+    for s in ["Really?", "really", "Are you sure?", "Seriously?", "Why?", "No way",
+              "wait what", "how come", "says who", "huh", "wow", "is that right"]:
+        assert main._is_short_reaction(s), s
+    for s in ["what is the weather tomorrow", "why is the sky blue", "who made you",
+              "tell me about Tokyo", "really long story about my trip"]:
+        assert not main._is_short_reaction(s), s
+
+    # process_turn folds a steer into the turn that pins the model to the last topic
+    captured = {}
+    def fake_agent(messages, on_token=None):
+        captured["turn"] = messages[-1]["content"]
+        return "Yes, that forecast holds."
+    msgs = [{"role": "system", "content": "sys"},
+            {"role": "user", "content": "weather in Tokyo tomorrow?"},
+            {"role": "assistant", "content": "Partly cloudy, 25C."}]
+    with mock.patch.object(main, "agent_turn", fake_agent), \
+            mock.patch.object(main, "recall", lambda q: []):
+        main.process_turn(msgs, "Really?")
+    assert "short reaction" in captured["turn"]
+    assert "talking about yourself" in captured["turn"]   # explicitly blocks identity drift
+
+    # a normal turn gets NO steer
+    captured.clear()
+    msgs2 = [{"role": "system", "content": "sys"},
+             {"role": "assistant", "content": "hi"}]
+    with mock.patch.object(main, "agent_turn", fake_agent), \
+            mock.patch.object(main, "recall", lambda q: []):
+        main.process_turn(msgs2, "what is the capital of France?")
+    assert "short reaction" not in captured["turn"]
