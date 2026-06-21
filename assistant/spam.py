@@ -22,13 +22,25 @@ import config
 log = logging.getLogger("assistant.spam")
 
 
+def _write_json(path: str, data) -> None:
+    """Atomically write JSON (temp file + rename) so a crash mid-write can't truncate a
+    file — important for the keep-list / auto-delete safety lists."""
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)
+    except OSError as e:
+        log.debug("could not write %s: %s", path, e)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
 def record_candidates(candidates: list) -> None:
     """Persist the latest scan result (timestamped) to the log file."""
-    try:
-        with open(config.SPAM_LOG_PATH, "w", encoding="utf-8") as f:
-            json.dump({"ts": time.time(), "candidates": candidates}, f)
-    except OSError as e:
-        log.debug("could not write spam log: %s", e)
+    _write_json(config.SPAM_LOG_PATH, {"ts": time.time(), "candidates": candidates})
 
 
 def _load() -> dict:
@@ -54,11 +66,7 @@ def add_keep(senders) -> set:
         senders = [senders]
     keep = load_keep()
     keep.update(s.strip().lower() for s in senders if s and s.strip())
-    try:
-        with open(config.SPAM_KEEP_PATH, "w", encoding="utf-8") as f:
-            json.dump(sorted(keep), f)
-    except OSError as e:
-        log.debug("could not write keep list: %s", e)
+    _write_json(config.SPAM_KEEP_PATH, sorted(keep))
     return keep
 
 
@@ -94,11 +102,7 @@ def add_autodelete(senders) -> set:
         senders = [senders]
     block = load_autodelete()
     block.update(s.strip().lower() for s in senders if s and s.strip())
-    try:
-        with open(config.SPAM_AUTODELETE_PATH, "w", encoding="utf-8") as f:
-            json.dump(sorted(block), f)
-    except OSError as e:
-        log.debug("could not write auto-delete list: %s", e)
+    _write_json(config.SPAM_AUTODELETE_PATH, sorted(block))
     return block
 
 
@@ -141,11 +145,7 @@ def announce(msg: str) -> None:
 
 # --- resumable scan checkpoint (so a huge scan survives interruption) ----------
 def save_scan_state(state: dict) -> None:
-    try:
-        with open(config.SPAM_SCAN_STATE_PATH, "w", encoding="utf-8") as f:
-            json.dump(state, f)
-    except OSError as e:
-        log.debug("could not write scan state: %s", e)
+    _write_json(config.SPAM_SCAN_STATE_PATH, state)
 
 
 def load_scan_state() -> dict:

@@ -101,13 +101,24 @@ def _normalize_dt(value: str, end_of_day: bool, now):
         return None
 
 
+def _resolve_one(value: str, end_of_day: bool, now):
+    """Normalize a single bound (relative phrase, date, naive, or ISO) to RFC3339."""
+    if value.strip().lower() in _RELATIVE:
+        start, end = _relative_window(value, now)
+        chosen = end if (end_of_day and end) else start
+        return chosen.isoformat()
+    return _normalize_dt(value, end_of_day, now)
+
+
 def _resolve_window(time_min: "str | None", time_max: "str | None", now=None):
     """Return (time_min, time_max) as RFC3339 strings, accepting relative phrases,
     date-only, naive, or full timestamps. Empty time_min defaults to now."""
     now = now or _local_now()
     if time_min and time_min.strip().lower() in _RELATIVE:
         start, end = _relative_window(time_min, now)
-        return start.isoformat(), (time_max or (end.isoformat() if end else None))
+        # An explicit time_max is normalized too (it may be a phrase/date), not passed raw.
+        tmax = _resolve_one(time_max, True, now) if time_max else (end.isoformat() if end else None)
+        return start.isoformat(), tmax
     tmin = _normalize_dt(time_min, False, now) if time_min else None
     tmax = _normalize_dt(time_max, True, now) if time_max else None
     return (tmin or now.isoformat()), tmax

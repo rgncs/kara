@@ -910,6 +910,12 @@ def test_calendar_time_resolution():
     assert parses(tmin) and parses(tmax)
     tmin, tmax = c._resolve_window(None, None, now)         # empty → now, no max
     assert parses(tmin) and tmax is None
+    # a relative time_min WITH an explicit time_max normalizes BOTH (the raw phrase
+    # used to be passed straight through and 400 the API)
+    tmin, tmax = c._resolve_window("this week", "next week", now)
+    assert parses(tmin) and parses(tmax) and "week" not in tmax
+    tmin, tmax = c._resolve_window("today", "2026-06-30", now)
+    assert parses(tmin) and parses(tmax)
 
 
 def test_chat_model_routing():

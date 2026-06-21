@@ -154,6 +154,10 @@ def _resample(wav: str, rate: int) -> str:
                        check=True, capture_output=True)
     except Exception as e:  # noqa: BLE001 — afconvert missing/failed: play the original
         log.debug("resample to %d Hz failed: %s", rate, e)
+        try:
+            os.unlink(out)  # clean up a partially-written conversion
+        except OSError:
+            pass
         return wav
     try:
         os.unlink(wav)
@@ -278,7 +282,7 @@ def _wait_or_voice(proc) -> bool:
         while proc.poll() is None:
             try:
                 data, _ = stream.read(n)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 — mic glitch: stop monitoring, let playback finish
                 break
             if _is_speech(data[:, 0], sr):
                 speech_run += 1
@@ -291,6 +295,7 @@ def _wait_or_voice(proc) -> bool:
                     return True
             else:
                 speech_run = 0
+    proc.wait()  # let playback finish (and populate returncode) before the caller cleans up
     return False
 
 
