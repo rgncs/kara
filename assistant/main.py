@@ -125,11 +125,21 @@ def _is_conversation_recap(text: str) -> bool:
 
 # Identity / origin / "what are you made of" questions get a fixed, accurate answer
 # (qwen otherwise improvises — claims to be a single model, or a person). Detected in
-# code so the answer is consistent every time, not left to the model.
+# code so the answer is consistent every time, not left to the model. Two buckets:
+# CREATOR questions ("who made/built you", "who's your creator") ALWAYS credit Wontaek
+# Shin; the rest are general identity/tech questions whose phrasing varies.
+_CREATOR = re.compile(
+    r"(?i)("
+    r"\bwho\s+(?:made|created|built|design(?:ed)?|wrote|coded|programmed|develop(?:ed)?|"
+    r"invented)\s+you\b"
+    r"|\bwho(?:'?s|\s+is|\s+are)\s+(?:your|the)\s+(?:creator|maker|developer|author|builder|"
+    r"inventor|dev|programmer)s?\b"
+    r"|\bwho\s+do\s+(?:i|we)\s+(?:have\s+to\s+)?thank\s+for\s+(?:you|making\s+you)\b"
+    r")")
+
 _IDENTITY = re.compile(
     r"(?i)("
-    r"\bwho\s+(?:made|created|built|design(?:ed)?|wrote|programmed|develop(?:ed)?)\s+you\b"
-    r"|\bwho\s+are\s+you\b(?!\s+(?:meeting|seeing|talking|speaking|calling|visiting|going|"
+    r"\bwho\s+are\s+you\b(?!\s+(?:meeting|seeing|talking|speaking|calling|visiting|going|"
     r"bringing|taking|inviting|texting|emailing|gonna|with|to|for))"
     r"|\bwhat\s+are\s+you\s*\??\s*$"
     r"|\bwhat(?:'?s|\s+is|\s+are)\s+your?\b[^?]*\b(?:made\s+(?:of|from)|built\s+(?:with|from|on)|"
@@ -143,11 +153,8 @@ _IDENTITY = re.compile(
     r"|\bare\s+you\s+(?:an?\s+)?(?:ai|a\.?i\.?|llm|gpt|chat\s?gpt|claude|gemini|language\s+model)\b"
     r")")
 
-# Several phrasings of the same answer so identity questions don't sound canned; one
-# is picked at random each time. Every variation keeps the core facts — Python
-# infrastructure representing agents over a blend of stateless open-source LLMs
-# (Gemma/Qwen3/DeepSeek) with voice/skills/context/conversation/memory tooling — but
-# only SOME credit Wontaek Shin, so he isn't named every single time.
+# General identity/tech answers — varied phrasing; only some credit Wontaek Shin, so he
+# isn't named every single time on a "what are you" question.
 _IDENTITY_ANSWERS = (
     "I'm primarily Python code that provides the infrastructure and represents agents that "
     "access a blend of stateless, open-source LLMs — like Gemma, Qwen3, and DeepSeek. The "
@@ -167,13 +174,35 @@ _IDENTITY_ANSWERS = (
     "voice, skills, context, conversation, memory — layered on top.",
 )
 
+# Creator answers — varied phrasing, but EVERY one names Wontaek Shin as the maker.
+_CREATOR_ANSWERS = (
+    "Wontaek Shin made me — he designed and built me: Python infrastructure wired around a "
+    "blend of stateless, open-source LLMs like Gemma, Qwen3, and DeepSeek, plus the tooling "
+    "for voice, skills, context, conversation, and memory.",
+    "I was created by Wontaek Shin. He put together the Python infrastructure and all the "
+    "surrounding tooling — voice, skills, memory, context, conversation — on top of a mix of "
+    "open-source models like Qwen3, Gemma, and DeepSeek.",
+    "That's Wontaek Shin — he designed and assembled me, from the Python core to the voice, "
+    "skills, memory, and conversation layers, over a blend of stateless open-source LLMs "
+    "such as Gemma, Qwen3, and DeepSeek.",
+)
+
 
 def _identity_answer() -> str:
     return random.choice(_IDENTITY_ANSWERS)
 
 
+def _creator_answer() -> str:
+    return random.choice(_CREATOR_ANSWERS)
+
+
+def _is_creator_question(text: str) -> bool:
+    return bool(_CREATOR.search(text or ""))
+
+
 def _is_identity_question(text: str) -> bool:
-    return bool(_IDENTITY.search(text or ""))
+    text = text or ""
+    return bool(_CREATOR.search(text) or _IDENTITY.search(text))
 
 
 # A request/question, not a personal statement — skip casual fact extraction on these so
@@ -618,7 +647,8 @@ def process_turn(messages: list[dict], user_input: str, printer: "_Printer | Non
     # Identity / origin / "what are you made of" → answer from the fixed description, not
     # the model (which improvises). Recorded in history so follow-ups have context.
     if _is_identity_question(user_input):
-        answer = _identity_answer()
+        # "Who made you?" always credits Wontaek Shin; "what are you?" varies.
+        answer = _creator_answer() if _is_creator_question(user_input) else _identity_answer()
         messages.append({"role": "user", "content": user_input})
         messages.append({"role": "assistant", "content": answer})
         history.trim(messages)

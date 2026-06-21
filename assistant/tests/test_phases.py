@@ -964,6 +964,27 @@ def test_identity_questions_get_fixed_answer():
     for ans in main._IDENTITY_ANSWERS:
         for token in ("Python", "Gemma", "Qwen3", "DeepSeek"):
             assert token in ans, (token, ans)
-    # ...but Wontaek Shin is mentioned in only some, not every time
+    # ...but on general "what are you" answers, Wontaek Shin is in only some, not all
     credited = [a for a in main._IDENTITY_ANSWERS if "Wontaek Shin" in a]
     assert 0 < len(credited) < len(main._IDENTITY_ANSWERS)
+
+
+def test_creator_questions_always_credit_wontaek():
+    import main
+    # "who made/built/created you", "who's your creator" → creator bucket
+    for q in ["who made you", "who created you", "who built you", "who designed you",
+              "who wrote you", "who's your creator", "who is your maker",
+              "who is your developer", "who programmed you"]:
+        assert main._is_creator_question(q), q
+        assert main._is_identity_question(q), q          # still short-circuits
+    # general identity / activity questions are NOT creator questions
+    for q in ["what are you", "what are you made of", "who are you", "what llm are you",
+              "what are you doing", "who are you meeting today"]:
+        assert not main._is_creator_question(q), q
+    # EVERY creator answer names Wontaek Shin, and there are a few to rotate
+    assert len(main._CREATOR_ANSWERS) >= 2
+    assert all("Wontaek Shin" in a for a in main._CREATOR_ANSWERS)
+    # process_turn routes a creator question to a Wontaek-crediting answer
+    msgs = [{"role": "system", "content": "sys"}]
+    reply = main.process_turn(msgs, "who made you?")
+    assert reply in main._CREATOR_ANSWERS and "Wontaek Shin" in reply
