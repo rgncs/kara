@@ -127,6 +127,14 @@ SPAM_SCAN_INTERVAL = int(os.environ.get("SPAM_SCAN_INTERVAL", "21600"))  # 6 hou
 SPAM_SCAN_MAX = int(os.environ.get("SPAM_SCAN_MAX", "300"))  # max unread sampled per scan
 SPAM_LOG_PATH = os.path.abspath(os.environ.get(
     "SPAM_LOG_PATH", os.path.join(os.path.dirname(__file__), "..", "spam_candidates.json")))
+# Large mailboxes: when a deep scan would cover more than SPAM_BATCH_THRESHOLD unread,
+# it runs in batches of SPAM_BATCH_SIZE, checkpointing progress to SPAM_SCAN_STATE_PATH
+# after each page so it resumes where it left off if interrupted, and announces after
+# each batch.
+SPAM_BATCH_THRESHOLD = int(os.environ.get("SPAM_BATCH_THRESHOLD", "20000"))
+SPAM_BATCH_SIZE = int(os.environ.get("SPAM_BATCH_SIZE", "2000"))
+SPAM_SCAN_STATE_PATH = os.path.abspath(os.environ.get(
+    "SPAM_SCAN_STATE_PATH", os.path.join(os.path.dirname(__file__), "..", "spam_scan_state.json")))
 # Senders you've marked "keep" — excluded from every scan and cleanup. Holds full
 # addresses (team@x.com) and/or bare domains (x.com).
 SPAM_KEEP_PATH = os.path.abspath(os.environ.get(

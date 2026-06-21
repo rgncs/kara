@@ -1321,3 +1321,57 @@ def test_spam_subdomain_match_and_numbering_and_chunking():
     svc._m.batchModify = lambda userId=None, body=None: (calls.append(len(body["ids"])) or _FakeReq({}))
     gmail_tool._trash_ids(svc, [str(i) for i in range(1500)])
     assert calls == [1000, 500]
+
+
+class _PagedSvc:
+    """Fake Gmail with pageToken pagination, for the resumable batched scan."""
+    def __init__(self, msgs, page=500):
+        self.msgs = msgs                 # id -> headers
+        self.page = page
+        self.order = list(msgs)
+    def users(self): return self
+    def messages(self): return self
+    def list(self, userId=None, q=None, maxResults=None, pageToken=None):
+        if maxResults == 1:              # the resultSizeEstimate probe
+            return _FakeReq({"resultSizeEstimate": len(self.msgs)})
+        start = int(pageToken) if pageToken else 0
+        chunk = self.order[start:start + self.page]
+        nxt = start + self.page
+        body = {"messages": [{"id": i} for i in chunk]}
+        if nxt < len(self.order):
+            body["nextPageToken"] = str(nxt)
+        return _FakeReq(body)
+    def get(self, userId=None, id=None, format=None, metadataHeaders=None):
+        return _FakeReq({"payload": {"headers": self.msgs[id]}})
+
+
+def test_spam_batched_scan_checkpoints_and_resumes(tmp_path):
+    import importlib, config, spam
+    from tools import gmail_tool
+    msgs = {}
+    for i in range(1200):                # 1200 unread, paginated 500/page
+        msgs[f"x{i}"] = _hdr("deals@spam.com") if i % 2 == 0 else _hdr("kevin@work.com")
+    with mock.patch.object(config, "SPAM_SCAN_STATE_PATH", str(tmp_path / "state.json")), \
+            mock.patch.object(config, "SPAM_BATCH_SIZE", 500):
+        importlib.reload(spam)
+        notes = []
+        spam.set_announcer(lambda m: notes.append(m))
+        with mock.patch.object(gmail_tool, "_service", return_value=_PagedSvc(msgs)):
+            cands = gmail_tool.scan_candidates_batched(threshold=10)
+        # both senders exceed 10 → both flagged, with exact counts (600 each)
+        counts = {c["sender"]: c["count"] for c in cands}
+        assert counts == {"deals@spam.com": 600, "kevin@work.com": 600}
+        assert any("Scanned" in n for n in notes)            # announced progress
+        assert not spam.load_scan_state()                    # checkpoint cleared on success
+
+    # resume: a checkpoint mid-scan continues, not restarts
+    with mock.patch.object(config, "SPAM_SCAN_STATE_PATH", str(tmp_path / "state2.json")):
+        importlib.reload(spam)
+        spam.save_scan_state({"by_sender": {"deals@spam.com": 300}, "unsub": {},
+                              "scanned": 600, "page_token": "600", "total_est": 1200})
+        with mock.patch.object(gmail_tool, "_service", return_value=_PagedSvc(msgs)):
+            cands = gmail_tool.scan_candidates_batched(threshold=10)
+        # picked up the 300 already counted + the remaining page (ids 600..1199)
+        assert {c["sender"] for c in cands} == {"deals@spam.com", "kevin@work.com"}
+        assert dict((c["sender"], c["count"]) for c in cands)["deals@spam.com"] == 600
+    importlib.reload(spam)

@@ -121,6 +121,48 @@ def last_scan_age() -> "float | None":
     return (time.time() - ts) if ts else None
 
 
+# --- progress announcements (set by main() so updates print and/or speak) -----
+_announcer = None
+
+
+def set_announcer(fn) -> None:
+    """Register how batch-progress updates reach the user (print and/or speak)."""
+    global _announcer
+    _announcer = fn
+
+
+def announce(msg: str) -> None:
+    log.info(msg)
+    try:
+        (_announcer or (lambda m: print(f"  📬 {m}")))(msg)
+    except Exception as e:  # noqa: BLE001 — a progress update must never break the scan
+        log.debug("announce failed: %s", e)
+
+
+# --- resumable scan checkpoint (so a huge scan survives interruption) ----------
+def save_scan_state(state: dict) -> None:
+    try:
+        with open(config.SPAM_SCAN_STATE_PATH, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+    except OSError as e:
+        log.debug("could not write scan state: %s", e)
+
+
+def load_scan_state() -> dict:
+    try:
+        with open(config.SPAM_SCAN_STATE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def clear_scan_state() -> None:
+    try:
+        os.unlink(config.SPAM_SCAN_STATE_PATH)
+    except OSError:
+        pass
+
+
 def run_scan(max_scan: int = None) -> list:
     """Scan now (live Gmail): auto-trash unread from confirmed auto-delete senders,
     then record the remaining candidates for review. Skips kept + auto-delete senders.

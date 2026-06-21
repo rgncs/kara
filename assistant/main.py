@@ -1030,6 +1030,16 @@ def main() -> None:
     # SPAM_SCAN_INTERVAL). Surface any pending ones so the user can ask for a cleanup.
     if config.GMAIL_ENABLED and config.SPAM_SCAN_ENABLED:
         import spam
+        # Batch-progress updates print, and speak too in voice mode.
+        def _announce(msg: str) -> None:
+            print(f"  📬 {msg}")
+            if use_voice:
+                try:
+                    import voice
+                    voice.speak(msg)
+                except Exception as e:  # noqa: BLE001
+                    log.debug("spoken progress failed: %s", e)
+        spam.set_announcer(_announce)
         spam.start_background_scanner()
         try:
             blocked = spam.load_autodelete()

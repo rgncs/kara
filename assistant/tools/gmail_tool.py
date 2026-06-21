@@ -406,6 +406,62 @@ KEEP_SENDER_SCHEMA = {
     },
 }
 
+def scan_candidates_batched(threshold: int = None, exclude=None) -> list:
+    """Full unread scan in resumable batches: checkpoint after each Gmail page so an
+    interruption resumes where it left off, and announce after each batch. Exact counts
+    (every message is counted). Used for large mailboxes by deep_spam_cleanup."""
+    from collections import defaultdict
+    import spam
+    if threshold is None:
+        threshold = config.SPAM_UNREAD_THRESHOLD
+    keep = {s.lower() for s in (exclude or [])}
+    svc = _service()
+
+    st = spam.load_scan_state()
+    by_sender = defaultdict(int, st.get("by_sender", {}))
+    has_unsub = dict(st.get("unsub", {}))
+    scanned = int(st.get("scanned", 0))
+    page_token = st.get("page_token")
+    total_est = st.get("total_est") or svc.users().messages().list(
+        userId="me", q="is:unread", maxResults=1).execute().get("resultSizeEstimate", 0)
+    if scanned:
+        spam.announce(f"Resuming the scan at {scanned:,} of ~{total_est:,} emails…")
+
+    since = 0
+    first = True
+    while page_token or first:
+        params = {"userId": "me", "q": "is:unread", "maxResults": 500}
+        if page_token:
+            params["pageToken"] = page_token
+        first = False
+        resp = svc.users().messages().list(**params).execute()
+        for m in resp.get("messages", []):
+            meta = svc.users().messages().get(
+                userId="me", id=m["id"], format="metadata",
+                metadataHeaders=["From", "List-Unsubscribe"]).execute()
+            p = meta.get("payload", {})
+            sender = parseaddr(_header(p, "From"))[1] or _header(p, "From") or "(unknown)"
+            scanned += 1
+            since += 1
+            if _excluded(sender, keep):
+                continue
+            by_sender[sender] += 1
+            if _header(p, "List-Unsubscribe"):
+                has_unsub[sender] = True
+        page_token = resp.get("nextPageToken")
+        spam.save_scan_state({"by_sender": dict(by_sender), "unsub": has_unsub,
+                              "scanned": scanned, "page_token": page_token, "total_est": total_est})
+        if since >= config.SPAM_BATCH_SIZE or not page_token:
+            spam.announce(f"Scanned {scanned:,} of ~{total_est:,} emails…")
+            since = 0
+
+    cands = [{"sender": s, "count": c, "unsubscribe": has_unsub.get(s, False), "ids": []}
+             for s, c in by_sender.items() if c > threshold]
+    cands.sort(key=lambda c: -c["count"])
+    spam.clear_scan_state()
+    return cands
+
+
 def deep_spam_cleanup() -> str:
     """DEEP cleanup: across the ENTIRE history, auto-trash every unread from the
     confirmed auto-delete list, then full-scan for NEW candidates (numbered, with
@@ -417,6 +473,8 @@ def deep_spam_cleanup() -> str:
         return f"ERROR: {e}"
     block = spam.load_autodelete()
     total, per = 0, {}
+    if block:
+        spam.announce("Clearing unread from your auto-delete senders…")
     for s in block:
         try:
             ids = _unread_ids_from(svc, s, max_delete=100000)  # whole history
@@ -426,12 +484,29 @@ def deep_spam_cleanup() -> str:
                 total += len(ids)
         except Exception as e:  # noqa: BLE001
             log.debug("deep auto-trash %s failed: %s", s, e)
+    if total:
+        spam.announce(f"Auto-deleted {total:,} unread from your confirmed list.")
+
+    # New-candidate scan: resumable batches if a scan is in progress or the mailbox is
+    # large (>SPAM_BATCH_THRESHOLD unread); otherwise a single fast pass.
+    exclude = spam.load_keep() | block
     try:
-        cands = find_spam_candidates(max_scan=0, exclude=spam.load_keep() | block)
+        resuming = bool(spam.load_scan_state())
+        est = svc.users().messages().list(
+            userId="me", q="is:unread", maxResults=1).execute().get("resultSizeEstimate", 0)
+        if resuming or est > config.SPAM_BATCH_THRESHOLD:
+            spam.announce(f"Scanning ~{est:,} unread in batches (resumes if interrupted)…")
+            cands = scan_candidates_batched(exclude=exclude)
+        else:
+            cands = find_spam_candidates(max_scan=0, exclude=exclude)
     except Exception as e:  # noqa: BLE001
-        return f"Auto-deleted {total} unread from your safe list, but the new-candidate scan failed: {e}"
+        return (f"Auto-deleted {total} unread from your safe list, but the new-candidate scan "
+                f"failed (it will resume next time): {e}")
     spam.record_candidates(cands)
-    out = [f"Deep cleanup done. Auto-deleted {total} unread from {len(per)} confirmed sender(s)."]
+    head = f"Deep cleanup done. Auto-deleted {total:,} unread"
+    head += (f" from your auto-delete list ({len(block)} sender(s) on it)."
+             if block else " (no senders on your auto-delete list yet).")
+    out = [head]
     out += [f"  - {s}: {n}" for s, n in sorted(per.items(), key=lambda x: -x[1])]
     if not cands:
         out.append("No new spam candidates to review.")

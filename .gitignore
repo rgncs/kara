@@ -20,10 +20,11 @@ voices/
 credentials.json
 token.json
 
-# Spam-scan log + keep / auto-delete lists (hold your senders' email addresses)
+# Spam-scan log + keep / auto-delete lists + resume checkpoint (hold sender addresses)
 spam_candidates.json
 spam_keep.json
 spam_autodelete.json
+spam_scan_state.json
 
 # Claude Code local config
 .claude/
