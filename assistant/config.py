@@ -153,7 +153,7 @@ VAD_START_MS = int(os.environ.get("VAD_START_MS", "150"))             # speech n
 VAD_MIN_SPEECH_MS = int(os.environ.get("VAD_MIN_SPEECH_MS", "300"))   # ignore utterances shorter than this
 # After "hey Kara", the conversation stays open (no wake word needed) until this many
 # seconds pass with no speech — then she waits for "hey Kara" again.
-VOICE_FOLLOWUP_TIMEOUT = int(os.environ.get("VOICE_FOLLOWUP_TIMEOUT", "10"))
+VOICE_FOLLOWUP_TIMEOUT = int(os.environ.get("VOICE_FOLLOWUP_TIMEOUT", "5"))
 
 # Spoken-response shaping: the full reply is always printed; if speaking it would
 # run longer than VOICE_SUMMARY_THRESHOLD_S, Kara speaks a short summary instead and
