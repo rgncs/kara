@@ -757,10 +757,14 @@ def _voice_summary(full_reply: str) -> str:
         resp = chat([
             {"role": "system", "content": "You rewrite text to be spoken aloud by a TTS voice."},
             {"role": "user", "content": instr + "\n\n---\n" + full_reply},
-        ], temperature=0, model=config.FAST_MODEL)  # cheap rewrite → fast subagent model
-        return (resp.choices[0].message.content or "").strip()
-    except Exception as e:  # noqa: BLE001
-        log.debug("voice summary failed: %s", e)
+        ], temperature=0, model=config.FAST_MODEL,   # cheap rewrite → fast subagent model
+           timeout=config.VOICE_SUMMARY_TIMEOUT)      # but never let it hang the voice turn
+        summary = (resp.choices[0].message.content or "").strip()
+        if summary:
+            return summary
+        raise ValueError("empty summary")
+    except Exception as e:  # noqa: BLE001 — timeout / stall / empty → speak a truncation
+        log.debug("voice summary failed (%s) — falling back to truncation", e)
         words = full_reply.split()
         return " ".join(words[:75]) + ("…" if len(words) > 75 else "")
 

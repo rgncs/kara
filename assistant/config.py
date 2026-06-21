@@ -160,6 +160,9 @@ VOICE_FOLLOWUP_TIMEOUT = int(os.environ.get("VOICE_FOLLOWUP_TIMEOUT", "10"))
 # offers to go deeper. Code is never spoken aloud.
 VOICE_WPM = int(os.environ.get("VOICE_WPM", "160"))                   # TTS speaking rate estimate
 VOICE_SUMMARY_THRESHOLD_S = int(os.environ.get("VOICE_SUMMARY_THRESHOLD_S", "30"))
+# Cap the fast-model summary call so a cold model load / stall can't hang the voice
+# turn — on timeout it falls back to a quick word-truncation and still speaks.
+VOICE_SUMMARY_TIMEOUT = int(os.environ.get("VOICE_SUMMARY_TIMEOUT", "20"))
 
 SYSTEM_PROMPT = (
     "You are {name}, a concise, capable coding agent running locally on the user's "

@@ -988,3 +988,32 @@ def test_creator_questions_always_credit_wontaek():
     msgs = [{"role": "system", "content": "sys"}]
     reply = main.process_turn(msgs, "who made you?")
     assert reply in main._CREATOR_ANSWERS and "Wontaek Shin" in reply
+
+
+def test_voice_summary_timeout_falls_back_and_never_hangs():
+    import main
+    import llm
+    long_reply = " ".join(f"word{i}" for i in range(200))
+    # a stalled/erroring summary model must NOT hang — fall back to a truncation
+    # (_voice_summary does `from llm import chat`, so patch the source: llm.chat)
+    with mock.patch.object(llm, "chat", side_effect=TimeoutError("model load stalled")):
+        out = main._voice_summary(long_reply)
+    assert out and out.endswith("…")
+    assert len(out.split()) <= 76  # ~75-word truncation, not the full 200
+    # an empty model response also falls back rather than returning ""
+    empty = mock.Mock()
+    empty.choices = [mock.Mock(message=mock.Mock(content=""))]
+    with mock.patch.object(llm, "chat", return_value=empty):
+        assert main._voice_summary(long_reply).split()
+
+
+def test_chat_passes_timeout_through():
+    import llm
+    captured = {}
+    with mock.patch.object(llm.client.chat.completions, "create",
+                           side_effect=lambda **kw: captured.update(kw)):
+        llm.chat([{"role": "user", "content": "hi"}], timeout=12)
+        assert captured.get("timeout") == 12
+        captured.clear()
+        llm.chat([{"role": "user", "content": "hi"}])      # no timeout → kwarg omitted
+        assert "timeout" not in captured

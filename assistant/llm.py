@@ -16,7 +16,8 @@ client = OpenAI(base_url=config.OLLAMA_BASE_URL, api_key="ollama")
 
 
 def chat(messages: list[dict], stream: bool = False, tools: list | None = None,
-         temperature: float | None = None, model: str | None = None):
+         temperature: float | None = None, model: str | None = None,
+         timeout: float | None = None):
     """Single entry point to the model.
 
     Non-streaming: returns the SDK response object (caller reads
@@ -26,11 +27,15 @@ def chat(messages: list[dict], stream: bool = False, tools: list | None = None,
     `temperature` overrides sampling — pass 0 for deterministic tasks like extraction.
     `model` overrides the model — defaults to CHAT_MODEL; pass FAST_MODEL or
     REASONING_MODEL to route a call to a subagent model.
+    `timeout` caps the request (seconds); the SDK raises APITimeoutError past it so
+    a stalled subagent call can't hang the loop — callers fall back on the error.
     """
     model = model or config.CHAT_MODEL
-    log.debug("chat() model=%s stream=%s tools=%d messages=%d temp=%s",
-              model, stream, len(tools or []), len(messages), temperature)
+    log.debug("chat() model=%s stream=%s tools=%d messages=%d temp=%s timeout=%s",
+              model, stream, len(tools or []), len(messages), temperature, timeout)
     kwargs = {} if temperature is None else {"temperature": temperature}
+    if timeout is not None:
+        kwargs["timeout"] = timeout
     return client.chat.completions.create(
         model=model,
         messages=messages,
