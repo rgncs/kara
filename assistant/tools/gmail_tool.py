@@ -429,7 +429,10 @@ def scan_candidates_batched(threshold: int = None, exclude=None) -> list:
 
     since = 0
     first = True
-    while page_token or first:
+    # Guard a narrow resume window: if a checkpoint has page_token=None but work was
+    # already done (scanned>0), the scan had finished — don't re-scan page 1 and double
+    # count; fall through to build candidates from the accumulated totals.
+    while page_token or (first and not scanned):
         params = {"userId": "me", "q": "is:unread", "maxResults": 500}
         if page_token:
             params["pageToken"] = page_token
