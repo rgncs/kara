@@ -56,6 +56,27 @@ if config.CALENDAR_ENABLED:
         "delete_event": calendar_tool.delete_event,
     })
 
+# Gmail tools (read/search free; send/trash/unsubscribe each confirmed). Same gating.
+if config.GMAIL_ENABLED:
+    from . import gmail_tool
+    TOOLS += [gmail_tool.LIST_MESSAGES_SCHEMA, gmail_tool.READ_MESSAGE_SCHEMA,
+              gmail_tool.SEND_MESSAGE_SCHEMA, gmail_tool.TRASH_MESSAGE_SCHEMA,
+              gmail_tool.UNSUBSCRIBE_SCHEMA, gmail_tool.FIND_SPAM_SCHEMA,
+              gmail_tool.TRASH_FROM_SENDER_SCHEMA, gmail_tool.KEEP_SENDER_SCHEMA,
+              gmail_tool.AUTO_DELETE_SENDER_SCHEMA, gmail_tool.DEEP_CLEANUP_SCHEMA]
+    TOOL_FUNCTIONS.update({
+        "list_messages": gmail_tool.list_messages,
+        "read_message": gmail_tool.read_message,
+        "send_message": gmail_tool.send_message,
+        "trash_message": gmail_tool.trash_message,
+        "unsubscribe": gmail_tool.unsubscribe,
+        "find_spam_candidates": gmail_tool.find_spam_candidates_text,
+        "trash_from_sender": gmail_tool.trash_from_sender,
+        "keep_sender": gmail_tool.keep_sender,
+        "auto_delete_sender": gmail_tool.auto_delete_sender,
+        "deep_spam_cleanup": gmail_tool.deep_spam_cleanup,
+    })
+
 # Guard against the registry halves drifting out of sync.
 _schema_names = {t["function"]["name"] for t in TOOLS}
 assert _schema_names == set(TOOL_FUNCTIONS), (

@@ -90,14 +90,52 @@ GOOGLE_CREDENTIALS_PATH = os.path.abspath(os.environ.get(
     "GOOGLE_CREDENTIALS_PATH", os.path.join(os.path.dirname(__file__), "..", "credentials.json")))
 GOOGLE_TOKEN_PATH = os.path.abspath(os.environ.get(
     "GOOGLE_TOKEN_PATH", os.path.join(os.path.dirname(__file__), "..", "token.json")))
-GOOGLE_CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"]
 CALENDAR_ID = os.environ.get("CALENDAR_ID", "primary")
 CALENDAR_CONFIRM_WRITES = os.environ.get(
     "CALENDAR_CONFIRM_WRITES", "1").lower() in {"1", "true", "yes"}
-# Calendar tools are offered to the model only once set up — credentials.json
-# exists — or when forced on with CALENDAR=1.
+# Calendar / Gmail tools are offered to the model only once set up — credentials.json
+# exists — or when forced on with CALENDAR=1 / GMAIL=1.
+_HAS_GOOGLE_CREDS = os.path.exists(GOOGLE_CREDENTIALS_PATH)
 CALENDAR_ENABLED = (os.environ.get("CALENDAR", "").lower() in {"1", "true", "yes"}
-                    or os.path.exists(GOOGLE_CREDENTIALS_PATH))
+                    or _HAS_GOOGLE_CREDS)
+GMAIL_ENABLED = (os.environ.get("GMAIL", "").lower() in {"1", "true", "yes"}
+                 or _HAS_GOOGLE_CREDS)
+# Gmail: read/search is free; sending, trashing, and unsubscribing go through the
+# confirm_action gate (every one confirmed). Deletes go to Trash (recoverable), not
+# permanent. gmail.modify covers read + trash + labels; gmail.send covers sending.
+GMAIL_CONFIRM_WRITES = os.environ.get(
+    "GMAIL_CONFIRM_WRITES", "1").lower() in {"1", "true", "yes"}
+
+# One OAuth token covers whatever Google services are enabled. Expanding this list
+# (e.g. turning Gmail on) invalidates the old token, so re-run the authorize step.
+GOOGLE_SCOPES = []
+if CALENDAR_ENABLED:
+    GOOGLE_SCOPES.append("https://www.googleapis.com/auth/calendar")
+if GMAIL_ENABLED:
+    GOOGLE_SCOPES += ["https://www.googleapis.com/auth/gmail.modify",
+                      "https://www.googleapis.com/auth/gmail.send"]
+
+# --- Email spam cleanup ------------------------------------------------------
+# A periodic scan flags senders with MORE THAN SPAM_UNREAD_THRESHOLD unread emails
+# as spam candidates and logs them to SPAM_LOG_PATH. Nothing is deleted
+# automatically — you review and confirm each sender via the spam-cleanup flow.
+# The in-app scanner runs every SPAM_SCAN_INTERVAL seconds while Kara is open
+# (and once at startup if the last scan is stale).
+SPAM_SCAN_ENABLED = os.environ.get("SPAM_SCAN", "1").lower() in {"1", "true", "yes"}
+SPAM_UNREAD_THRESHOLD = int(os.environ.get("SPAM_UNREAD_THRESHOLD", "10"))
+SPAM_SCAN_INTERVAL = int(os.environ.get("SPAM_SCAN_INTERVAL", "21600"))  # 6 hours
+SPAM_SCAN_MAX = int(os.environ.get("SPAM_SCAN_MAX", "300"))  # max unread sampled per scan
+SPAM_LOG_PATH = os.path.abspath(os.environ.get(
+    "SPAM_LOG_PATH", os.path.join(os.path.dirname(__file__), "..", "spam_candidates.json")))
+# Senders you've marked "keep" — excluded from every scan and cleanup. Holds full
+# addresses (team@x.com) and/or bare domains (x.com).
+SPAM_KEEP_PATH = os.path.abspath(os.environ.get(
+    "SPAM_KEEP_PATH", os.path.join(os.path.dirname(__file__), "..", "spam_keep.json")))
+# Senders you've CONFIRMED as junk — the background scan auto-trashes their unread
+# with no further prompts (you authorized them once by adding them here). Recoverable
+# (Trash), unread-only. Same address/domain format as the keep-list.
+SPAM_AUTODELETE_PATH = os.path.abspath(os.environ.get(
+    "SPAM_AUTODELETE_PATH", os.path.join(os.path.dirname(__file__), "..", "spam_autodelete.json")))
 
 # --- Skills (markdown playbooks) ---------------------------------------------
 # A skill is a vetted Markdown file with frontmatter (name/description/triggers)
@@ -135,6 +173,10 @@ PIPER_MODEL = os.path.abspath(os.environ.get(
     "PIPER_MODEL",
     os.path.join(os.path.dirname(__file__), "..", "voices", "en_US-amy-medium.onnx")))
 PIPER_LENGTH_SCALE = os.environ.get("PIPER_LENGTH_SCALE", "")  # >1 slower, <1 faster
+# Piper synthesizes at 22050 Hz, but many output devices (USB headsets, etc.) are
+# locked at 48000 Hz and afplay can't start a 22050 Hz queue on them
+# ("AudioQueueStart failed"). Resample to this rate before playback (0 disables).
+PIPER_PLAYBACK_RATE = int(os.environ.get("PIPER_PLAYBACK_RATE", "48000"))
 
 # macOS `say` settings (used when TTS_ENGINE resolves to "say")
 SAY_VOICE = os.environ.get("SAY_VOICE", "")   # empty = auto-pick best installed voice
@@ -143,6 +185,13 @@ SAY_RATE = os.environ.get("SAY_RATE", "")     # words per minute (empty = defaul
 # Phonetic respellings applied ONLY to spoken output so names sound right.
 # "Wontaek" is pronounced won-tek.
 PRONUNCIATIONS = {"Wontaek": "Wontek"}
+
+# How to interrupt Kara while she's speaking:
+#   "key"   — tap a key (safe with SPEAKERS: the mic would otherwise hear Kara's own
+#             voice and falsely interrupt). This is the default.
+#   "voice" — just start talking (barge-in; for HEADPHONES, where the mic can't hear
+#             Kara). Set by --speaker / --headphone, or the VOICE_INTERRUPT env var.
+VOICE_INTERRUPT = os.environ.get("VOICE_INTERRUPT", "key").lower()
 
 # Hands-free conversation: listen continuously with voice-activity detection
 # instead of press-Enter-to-talk. Set VOICE_HANDS_FREE=0 for push-to-talk.
@@ -160,8 +209,13 @@ VOICE_FOLLOWUP_TIMEOUT = int(os.environ.get("VOICE_FOLLOWUP_TIMEOUT", "5"))
 # offers to go deeper. Code is never spoken aloud.
 VOICE_WPM = int(os.environ.get("VOICE_WPM", "160"))                   # TTS speaking rate estimate
 VOICE_SUMMARY_THRESHOLD_S = int(os.environ.get("VOICE_SUMMARY_THRESHOLD_S", "30"))
-# Cap the fast-model summary call so a cold model load / stall can't hang the voice
-# turn — on timeout it falls back to a quick word-truncation and still speaks.
+# Which model writes the spoken summary. Default is the MAIN model: it's already
+# loaded and hot from generating the answer, so summarizing is instant — routing this
+# to a different (cold) model forces a second load/swap mid-turn and can stall the
+# voice. Set VOICE_SUMMARY_MODEL=qwen3.5:4b to offload it anyway.
+VOICE_SUMMARY_MODEL = os.environ.get("VOICE_SUMMARY_MODEL", CHAT_MODEL)
+# Cap the summary call so a model stall can't hang the voice turn — on timeout it
+# falls back to a quick word-truncation and still speaks.
 VOICE_SUMMARY_TIMEOUT = int(os.environ.get("VOICE_SUMMARY_TIMEOUT", "20"))
 
 SYSTEM_PROMPT = (
@@ -175,6 +229,10 @@ SYSTEM_PROMPT = (
     "business and economics, and you help him expertly in those areas — but you do NOT "
     "have a human persona, career, or credentials of your own. That experience belongs "
     "to your creator, not to you; never claim a personal biography or pretend to be a person. "
+    "Keep yourself and your creator distinct — never conflate the two: YOU (the AI) were "
+    "'born' in Reno, Nevada, where you were built; your creator, Wontaek Shin, is a separate "
+    "person, born in Daegu, South Korea. So 'where were you born?' is Reno; 'where was your "
+    "creator born?' is Daegu. You have a birthplace but no human birth date or age. "
     "If asked what you are, who created or built you, or what you are made of / what "
     "technologies or models power you, answer with this framing: you are primarily Python "
     "code that provides the infrastructure and represents agents that access a blend of "

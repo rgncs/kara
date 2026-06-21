@@ -144,6 +144,24 @@ def _speak_say(text: str) -> None:
         log.debug("say failed: %s", e)
 
 
+def _resample(wav: str, rate: int) -> str:
+    """Resample `wav` to `rate` Hz with the built-in afconvert, so it plays on devices
+    locked at a different rate (USB headsets are usually 48000 Hz; Piper is 22050 Hz).
+    Returns the new path (original deleted), or the original wav if conversion fails."""
+    out = (wav[:-4] if wav.endswith(".wav") else wav) + f".{rate}.wav"
+    try:
+        subprocess.run(["afconvert", "-f", "WAVE", "-d", f"LEI16@{rate}", wav, out],
+                       check=True, capture_output=True)
+    except Exception as e:  # noqa: BLE001 — afconvert missing/failed: play the original
+        log.debug("resample to %d Hz failed: %s", rate, e)
+        return wav
+    try:
+        os.unlink(wav)
+    except OSError:
+        pass
+    return out
+
+
 def _piper_synth(text: str):
     """Synthesize `text` to a temp WAV with Piper. Returns the path, or None on failure."""
     wav = None
@@ -154,7 +172,7 @@ def _piper_synth(text: str):
         if config.PIPER_LENGTH_SCALE:
             args += ["--length-scale", str(config.PIPER_LENGTH_SCALE)]
         subprocess.run(args, input=text, text=True, capture_output=True, check=True)
-        return wav
+        return _resample(wav, config.PIPER_PLAYBACK_RATE) if config.PIPER_PLAYBACK_RATE else wav
     except Exception as e:  # noqa: BLE001
         log.debug("piper synth failed: %s", e)
         if wav:
@@ -165,13 +183,40 @@ def _piper_synth(text: str):
         return None
 
 
+def _afplay(wav: str, waiter=None) -> "tuple[bool, bool]":
+    """Play `wav` with afplay. `waiter(proc)->bool` watches for an interrupt (keypress
+    or voice) and returns True if the user cut it off; None just waits. Retries once on
+    a transient CoreAudio failure ("AudioQueueStart failed"). Returns (ok, interrupted).
+    stderr is swallowed; we log and let the caller fall back to `say` on failure."""
+    import time
+    for attempt in range(2):
+        try:
+            proc = subprocess.Popen(["afplay", wav], stderr=subprocess.DEVNULL)
+        except Exception as e:  # noqa: BLE001
+            log.debug("afplay launch failed: %s", e)
+            return False, False
+        if waiter is not None:
+            if waiter(proc):
+                return True, True
+        else:
+            proc.wait()
+        if proc.returncode == 0:
+            return True, False
+        log.debug("afplay failed (rc=%s, attempt %d) — output device not ready",
+                  proc.returncode, attempt + 1)
+        time.sleep(0.4)  # let the device settle, then retry once
+    return False, False
+
+
 def _speak_piper(text: str) -> None:
     wav = _piper_synth(text)
     if not wav:
         _speak_say(text)
         return
     try:
-        subprocess.run(["afplay", wav], check=False)
+        ok, _ = _afplay(wav)  # non-interruptible (no waiter)
+        if not ok:
+            _speak_say(text)  # afplay couldn't play (device issue) — fall back to say
     finally:
         try:
             os.unlink(wav)
@@ -212,21 +257,68 @@ def _wait_or_key(proc) -> bool:
             pass
 
 
+def _wait_or_voice(proc) -> bool:
+    """Wait for playback `proc`; if the user starts SPEAKING (barge-in), kill it and
+    return True (interrupted). For headphone use — the mic must not pick up Kara's own
+    output, or she'd interrupt herself. Falls back to a plain wait if the mic is
+    unavailable."""
+    import sounddevice as sd
+    sr = config.VOICE_SAMPLE_RATE
+    frame_ms = 30
+    n = int(sr * frame_ms / 1000)
+    need_start = max(1, config.VAD_START_MS // frame_ms)
+    speech_run = 0
+    try:
+        stream = sd.InputStream(samplerate=sr, channels=1, dtype="int16", blocksize=n)
+    except Exception as e:  # noqa: BLE001
+        log.debug("barge-in mic unavailable (%s) — playing without it", e)
+        proc.wait()
+        return False
+    with stream:
+        while proc.poll() is None:
+            try:
+                data, _ = stream.read(n)
+            except Exception:  # noqa: BLE001
+                break
+            if _is_speech(data[:, 0], sr):
+                speech_run += 1
+                if speech_run >= need_start:        # sustained speech → barge in
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                    return True
+            else:
+                speech_run = 0
+    return False
+
+
+def _interrupter():
+    """The waiter for the configured interrupt mode: voice barge-in or keypress."""
+    return _wait_or_voice if config.VOICE_INTERRUPT == "voice" else _wait_or_key
+
+
 def speak_interruptible(text: str) -> bool:
-    """Speak `text`, but let a keypress cut it off. Returns True if interrupted."""
+    """Speak `text`, but let the user cut it off — by a keypress (speaker mode) or by
+    talking (headphone/barge-in mode). Returns True if interrupted."""
     spoken = _apply_pronunciations(_clean_for_speech(text))
     if not spoken:
         return False
+    waiter = _interrupter()
     if _resolve_engine() == "piper":
         wav = _piper_synth(spoken)
         if wav:
             try:
-                return _wait_or_key(subprocess.Popen(["afplay", wav]))
+                ok, interrupted = _afplay(wav, waiter)
             finally:
                 try:
                     os.unlink(wav)
                 except OSError:
                     pass
+            if ok:
+                return interrupted
+            # afplay couldn't play (device issue) — fall through to `say`
     cmd = ["say"]
     chosen = config.SAY_VOICE or _best_voice()
     if chosen:
@@ -235,7 +327,7 @@ def speak_interruptible(text: str) -> bool:
         cmd += ["-r", str(config.SAY_RATE)]
     cmd.append(spoken)
     try:
-        return _wait_or_key(subprocess.Popen(cmd))
+        return waiter(subprocess.Popen(cmd))
     except Exception as e:  # noqa: BLE001
         log.debug("speak failed: %s", e)
         return False

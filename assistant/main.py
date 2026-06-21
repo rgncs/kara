@@ -9,6 +9,7 @@ import os
 import random
 import re
 import sys
+import time
 
 import approval
 import config
@@ -188,6 +189,62 @@ _CREATOR_ANSWERS = (
 )
 
 
+# Origin facts (kept straight between the AI and its human creator — never conflated):
+#   Kara was "born" in Reno, Nevada (where it was built).
+#   Wontaek Shin, the creator, is a separate person, born in Daegu, South Korea.
+_AI_BIRTHPLACE = "Reno, Nevada"
+_CREATOR_BIRTHPLACE = "Daegu, South Korea"
+
+# Age / "when were you born" — Kara has a birthplace (Reno) but no human birth DATE;
+# answer in the first person (the model otherwise flips pronouns or invents a date).
+_AGE = re.compile(
+    r"(?i)("
+    r"\bwhen\s+(?:were|was)\s+you\s+(?:born|made|created|built|written)\b"
+    r"|\bwhat(?:'?s|\s+is)\s+your\s+(?:birthday|birth\s*date|age)\b"
+    r"|\bhow\s+old\s+are\s+you\b"
+    r"|\bdo\s+you\s+have\s+(?:a\s+)?(?:birthday|an\s+age)\b"
+    r")")
+
+_AGE_ANSWERS = (
+    f"I don't have a birth date the way people do, but I was 'born' in {_AI_BIRTHPLACE}, "
+    "where Wontaek Shin built me.",
+    f"No real birthday — I'm software — though you could say I came to life in {_AI_BIRTHPLACE}, "
+    "courtesy of my creator, Wontaek Shin.",
+    f"I wasn't born on a date, but my origin is {_AI_BIRTHPLACE}, where Wontaek Shin put me "
+    "together.",
+)
+
+# "Where were you born / where are you from" → Kara's birthplace (Reno).
+_BIRTHPLACE_YOU = re.compile(
+    r"(?i)("
+    r"\bwhere\s+(?:were|was)\s+you\s+(?:born|made|created|built)\b"
+    r"|\bwhere\s+(?:are|do)\s+you\s+(?:from|come\s+from)\b"
+    r"|\bwhat(?:'?s|\s+is)\s+your\s+(?:hometown|home\s*town|birthplace)\b"
+    r")")
+
+_BIRTHPLACE_YOU_ANSWERS = (
+    f"I was born in {_AI_BIRTHPLACE} — that's where Wontaek Shin built me.",
+    f"{_AI_BIRTHPLACE} is my birthplace; that's where my creator, Wontaek Shin, put me together.",
+    f"I come from {_AI_BIRTHPLACE}, where I was first built.",
+)
+
+# "Where was your creator / Wontaek born / from" → the creator's birthplace (Daegu).
+_CREATOR_ORIGIN = re.compile(
+    r"(?i)("
+    r"\bwhere\s+(?:was|were)\s+(?:your\s+(?:creator|maker|developer|builder)|"
+    r"wontaek(?:\s+shin)?)\s+born\b"
+    r"|\bwhere\s+(?:is|'?s|are)\s+(?:your\s+(?:creator|maker|developer)|wontaek(?:\s+shin)?)\s+"
+    r"(?:from|come\s+from)\b"
+    r"|\bwhat(?:'?s|\s+is)\s+(?:your\s+creator'?s?|wontaek(?:\s+shin)?'?s?)\s+(?:hometown|birthplace)\b"
+    r")")
+
+_CREATOR_ORIGIN_ANSWERS = (
+    f"My creator, Wontaek Shin, was born in {_CREATOR_BIRTHPLACE}.",
+    f"Wontaek Shin — the person who made me — was born in {_CREATOR_BIRTHPLACE}.",
+    f"That's Wontaek Shin; he was born in {_CREATOR_BIRTHPLACE}.",
+)
+
+
 def _identity_answer() -> str:
     return random.choice(_IDENTITY_ANSWERS)
 
@@ -196,13 +253,38 @@ def _creator_answer() -> str:
     return random.choice(_CREATOR_ANSWERS)
 
 
+def _age_answer() -> str:
+    return random.choice(_AGE_ANSWERS)
+
+
+def _birthplace_answer() -> str:
+    return random.choice(_BIRTHPLACE_YOU_ANSWERS)
+
+
+def _creator_origin_answer() -> str:
+    return random.choice(_CREATOR_ORIGIN_ANSWERS)
+
+
 def _is_creator_question(text: str) -> bool:
     return bool(_CREATOR.search(text or ""))
 
 
+def _is_age_question(text: str) -> bool:
+    return bool(_AGE.search(text or ""))
+
+
+def _is_birthplace_question(text: str) -> bool:
+    return bool(_BIRTHPLACE_YOU.search(text or ""))
+
+
+def _is_creator_origin_question(text: str) -> bool:
+    return bool(_CREATOR_ORIGIN.search(text or ""))
+
+
 def _is_identity_question(text: str) -> bool:
     text = text or ""
-    return bool(_CREATOR.search(text) or _IDENTITY.search(text))
+    return bool(_CREATOR.search(text) or _CREATOR_ORIGIN.search(text)
+                or _BIRTHPLACE_YOU.search(text) or _AGE.search(text) or _IDENTITY.search(text))
 
 
 # A request/question, not a personal statement — skip casual fact extraction on these so
@@ -647,8 +729,18 @@ def process_turn(messages: list[dict], user_input: str, printer: "_Printer | Non
     # Identity / origin / "what are you made of" → answer from the fixed description, not
     # the model (which improvises). Recorded in history so follow-ups have context.
     if _is_identity_question(user_input):
-        # "Who made you?" always credits Wontaek Shin; "what are you?" varies.
-        answer = _creator_answer() if _is_creator_question(user_input) else _identity_answer()
+        # Keep the AI and its creator distinct. Check creator-origin BEFORE the AI's own
+        # birthplace so "where was your creator born?" → Daegu, not Reno.
+        if _is_creator_origin_question(user_input):
+            answer = _creator_origin_answer()          # Wontaek → Daegu, South Korea
+        elif _is_creator_question(user_input):
+            answer = _creator_answer()                 # "who made you?" → Wontaek Shin
+        elif _is_birthplace_question(user_input):
+            answer = _birthplace_answer()              # "where were you born?" → Reno
+        elif _is_age_question(user_input):
+            answer = _age_answer()                     # "when were you born?" → no date
+        else:
+            answer = _identity_answer()                # "what are you?" → varied tech
         messages.append({"role": "user", "content": user_input})
         messages.append({"role": "assistant", "content": answer})
         history.trim(messages)
@@ -757,8 +849,8 @@ def _voice_summary(full_reply: str) -> str:
         resp = chat([
             {"role": "system", "content": "You rewrite text to be spoken aloud by a TTS voice."},
             {"role": "user", "content": instr + "\n\n---\n" + full_reply},
-        ], temperature=0, model=config.FAST_MODEL,   # cheap rewrite → fast subagent model
-           timeout=config.VOICE_SUMMARY_TIMEOUT)      # but never let it hang the voice turn
+        ], temperature=0, model=config.VOICE_SUMMARY_MODEL,  # main model is already hot
+           timeout=config.VOICE_SUMMARY_TIMEOUT)              # never let it hang the voice turn
         summary = (resp.choices[0].message.content or "").strip()
         if summary:
             return summary
@@ -795,18 +887,35 @@ _THINKING_FILLERS = (
 )
 
 
+def _should_rearm(user_input: "str | None", idle_seconds: float, timeout: float) -> bool:
+    """In an active hands-free conversation, decide whether to re-arm the wake word.
+
+    Re-arm when no speech started this listen (`None`), OR a stretch of empty/noise
+    blips has gone `timeout` seconds without any real utterance. A non-empty utterance
+    keeps the conversation open (and resets the idle clock in the loop)."""
+    if user_input is None:
+        return True
+    if not user_input:                       # empty/noise blip — re-arm only once idle
+        return idle_seconds >= timeout
+    return False                             # real speech — stay active
+
+
 def _voice_loop(messages: list[dict], label: str) -> None:
     import voice
     hands_free = config.VOICE_HANDS_FREE
     timeout = config.VOICE_FOLLOWUP_TIMEOUT
+    barge = config.VOICE_INTERRUPT == "voice"
+    cut = "just start talking to interrupt her (headphone mode)" if barge \
+        else "tap a key to interrupt her (speaker mode)"
     if hands_free:
         print("Hands-free voice mode — say \"hey Kara\" to start, then just keep talking.")
         print(f"After ~{timeout}s of silence she waits for \"hey Kara\" again. "
-              "Tap a key to interrupt; \"hey Kara, goodbye\" or Ctrl-C to quit.\n")
+              f"{cut[0].upper() + cut[1:]}; \"hey Kara, goodbye\" or Ctrl-C to quit.\n")
     else:
         print("Push-to-talk: Enter to start/stop talking ('t' to type). Ctrl-C to quit.\n")
 
     active = False  # in an ongoing hands-free conversation (no wake word needed)
+    last_active = 0.0  # monotonic time real speech last happened — the idle re-arm clock
     while True:
         try:
             if not hands_free:
@@ -815,7 +924,10 @@ def _voice_loop(messages: list[dict], label: str) -> None:
                 print("🎤 …", end="\r", flush=True)
                 user_input = voice.listen_vad(start_timeout=timeout)
                 print(" " * 24, end="\r", flush=True)
-                if user_input is None:        # silence → re-arm the wake word
+                # Re-arm once `timeout` seconds pass with no REAL input — whether that's
+                # clean silence (None) or a run of noise blips that keep re-triggering VAD
+                # (whose per-call timer would otherwise reset every time and never fire).
+                if _should_rearm(user_input, time.monotonic() - last_active, timeout):
                     active = False
                     print('  (paused — say "hey Kara" to continue)')
                     continue
@@ -828,6 +940,7 @@ def _voice_loop(messages: list[dict], label: str) -> None:
             break
         if not user_input:
             continue
+        last_active = time.monotonic()  # real, non-empty speech — reset the idle clock
 
         # Wake word (hands-free): required to start; optional once the conversation is active.
         if hands_free:
@@ -869,10 +982,21 @@ def _voice_loop(messages: list[dict], label: str) -> None:
                 " … (interrupted by the user before finishing)"
             print("  ⏹ interrupted — go ahead")
 
+        # Start the idle re-arm clock when SHE stops talking, so you get the full
+        # follow-up window to respond before "hey Kara" is needed again.
+        last_active = time.monotonic()
+
 
 def main() -> None:
     _setup_logging()
-    use_voice = "--voice" in sys.argv or os.environ.get("VOICE", "").lower() in {"1", "true", "yes"}
+    use_voice = (any(f in sys.argv for f in ("--voice", "--headphone", "--speaker"))
+                 or os.environ.get("VOICE", "").lower() in {"1", "true", "yes"})
+    # --headphone: interrupt Kara by talking (barge-in). --speaker: interrupt by key
+    # (safe when the mic can hear Kara's own voice). Either implies voice mode.
+    if "--headphone" in sys.argv:
+        config.VOICE_INTERRUPT = "voice"
+    elif "--speaker" in sys.argv:
+        config.VOICE_INTERRUPT = "key"
 
     preflight([config.CHAT_MODEL, config.EMBED_MODEL])  # memory needs the embed model too
     try:
@@ -896,8 +1020,30 @@ def main() -> None:
     print(f"Subagents — {extra}")
     print(f"Workspace: {config.WORKSPACE_ROOT}")
     print(f"Shell approval: {config.COMMAND_APPROVAL}")
-    mode = "voice" if use_voice else "text"
+    if use_voice:
+        mode = f"voice ({'headphone — talk to interrupt' if config.VOICE_INTERRUPT == 'voice' else 'speaker — key to interrupt'})"
+    else:
+        mode = "text"
     print(f"Mode: {mode}. Set ASSISTANT_DEBUG=1 to see tool calls.\n")
+
+    # Periodic background spam scan (read-only; logs candidates every
+    # SPAM_SCAN_INTERVAL). Surface any pending ones so the user can ask for a cleanup.
+    if config.GMAIL_ENABLED and config.SPAM_SCAN_ENABLED:
+        import spam
+        spam.start_background_scanner()
+        try:
+            blocked = spam.load_autodelete()
+            if blocked:
+                print(f"🗑  auto-deleting unread from {len(blocked)} confirmed sender(s) "
+                      "in the background.")
+            pending = spam.load_candidates()
+            if pending:
+                print(f"📬 {len(pending)} sender(s) have over {config.SPAM_UNREAD_THRESHOLD} "
+                      "unread emails — say \"spam cleanup\" to review.")
+            if blocked or pending:
+                print()
+        except Exception as e:  # noqa: BLE001
+            log.debug("spam notice failed: %s", e)
 
     if use_voice:
         _voice_loop(messages, label)

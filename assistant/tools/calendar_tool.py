@@ -1,62 +1,23 @@
 """Google Calendar tools: list_events, create_event, delete_event.
 
-Auth is the OAuth "desktop app" flow. You create credentials.json in the Google
-Cloud console (Calendar API enabled); the first authenticated call (or running
-this module directly) opens a browser once and writes token.json with a refresh
-token. Later runs reuse and silently refresh it.
-
-The google-* libraries are imported lazily so the rest of Kara runs even when
-they aren't installed — every function returns a readable "ERROR: ..." string
-instead of raising, matching the other tools. Reads are free; create/delete go
-through approval.confirm_action() (the same human-in-the-loop gate as the shell)
-unless CALENDAR_CONFIRM_WRITES is off.
+Auth is the shared Google OAuth (see google_auth.py); authorize once with
+`python assistant/tools/google_auth.py`. The google-* libraries are imported
+lazily so the rest of Kara runs even when they aren't installed — every function
+returns a readable "ERROR: ..." string instead of raising. Reads are free;
+create/delete go through approval.confirm_action() (the same human-in-the-loop
+gate as the shell) unless CALENDAR_CONFIRM_WRITES is off.
 """
 import logging
-import os
-import sys
-
-# Allow running this file directly for one-time OAuth setup
-# (`python assistant/tools/calendar_tool.py`): put assistant/ on the path so the
-# sibling `approval`/`config` modules resolve the same way they do under main.py.
-if __name__ == "__main__":
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import approval
 import config
 
 log = logging.getLogger("assistant.calendar")
 
-_SERVICE = None  # cached authenticated Calendar API client
-
-
 def _service():
-    """Return an authenticated Calendar API client, running the OAuth flow if needed."""
-    global _SERVICE
-    if _SERVICE is not None:
-        return _SERVICE
-    from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from google.auth.transport.requests import Request
-    from googleapiclient.discovery import build
-
-    scopes = config.GOOGLE_CALENDAR_SCOPES
-    creds = None
-    if os.path.exists(config.GOOGLE_TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(config.GOOGLE_TOKEN_PATH, scopes)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not os.path.exists(config.GOOGLE_CREDENTIALS_PATH):
-                raise FileNotFoundError(
-                    f"missing {config.GOOGLE_CREDENTIALS_PATH} — download an OAuth "
-                    "'desktop app' credentials.json from Google Cloud console first")
-            flow = InstalledAppFlow.from_client_secrets_file(config.GOOGLE_CREDENTIALS_PATH, scopes)
-            creds = flow.run_local_server(port=0)
-        with open(config.GOOGLE_TOKEN_PATH, "w", encoding="utf-8") as f:
-            f.write(creds.to_json())
-    _SERVICE = build("calendar", "v3", credentials=creds, cache_discovery=False)
-    return _SERVICE
+    """Return an authenticated Calendar API client (shared Google OAuth)."""
+    from . import google_auth
+    return google_auth.service("calendar", "v3")
 
 
 def _calendar_tz(service) -> "str | None":
@@ -296,8 +257,3 @@ DELETE_EVENT_SCHEMA = {
 }
 
 
-if __name__ == "__main__":
-    # One-time setup: trigger the OAuth consent flow and cache token.json.
-    print("Authorizing Google Calendar access (a browser window will open)…")
-    _service()
-    print(f"Done — token saved to {config.GOOGLE_TOKEN_PATH}")

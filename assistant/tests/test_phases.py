@@ -1017,3 +1017,307 @@ def test_chat_passes_timeout_through():
         captured.clear()
         llm.chat([{"role": "user", "content": "hi"}])      # no timeout → kwarg omitted
         assert "timeout" not in captured
+
+
+def test_voice_rearm_idle_clock():
+    """Wake word re-arms after `timeout` seconds of no REAL input — robust to a run of
+    noise blips that would otherwise reset the per-listen timer forever."""
+    import main
+    T = 5
+    # clean silence (listen_vad returned None) → re-arm immediately
+    assert main._should_rearm(None, 0.0, T) is True
+    # empty/noise blips keep the conversation open until the idle window elapses...
+    assert main._should_rearm("", 1.0, T) is False
+    assert main._should_rearm("", T - 0.1, T) is False
+    # ...then re-arm once enough wall-clock idle time has passed (no per-call reset)
+    assert main._should_rearm("", T, T) is True
+    assert main._should_rearm("", 30.0, T) is True
+    # a real utterance always keeps the conversation active
+    assert main._should_rearm("turn on the lights", 99.0, T) is False
+
+
+def test_age_birthday_questions_answer_first_person():
+    import main
+    import re as _re
+    # birth / age / birthday questions are detected and route to the age answer
+    for q in ["when were you born", "when were you made", "how old are you",
+              "what's your birthday", "what is your age", "do you have a birthday"]:
+        assert main._is_age_question(q), q
+        assert main._is_identity_question(q), q       # short-circuits, no model call
+        assert not main._is_creator_question(q), q    # not a "who made you" question
+    # answers are first-person, claim no human birthday, and invent no date/year
+    assert len(main._AGE_ANSWERS) >= 2
+    for ans in main._AGE_ANSWERS:
+        assert not _re.search(r"20\d\d", ans), ans    # no fabricated birth year
+        assert "You were born" not in ans             # never the flipped-pronoun bug
+    # process_turn answers a birth question from the age set (not user-as-subject)
+    msgs = [{"role": "system", "content": "sys"}]
+    reply = main.process_turn(msgs, "when were you born?")
+    assert reply in main._AGE_ANSWERS
+
+
+def test_birthplace_distinction_ai_vs_creator():
+    import main
+    # the AI's own birthplace → Reno (never the creator's Daegu)
+    for q in ["where were you born", "where are you from", "what's your hometown",
+              "where were you built"]:
+        assert main._is_birthplace_question(q), q
+        assert not main._is_creator_origin_question(q), q
+    # the creator's birthplace → Daegu (never the AI's Reno)
+    for q in ["where was your creator born", "where was Wontaek Shin born",
+              "where is Wontaek from", "what's your creator's hometown"]:
+        assert main._is_creator_origin_question(q), q
+        assert not main._is_birthplace_question(q), q
+    # every answer keeps the two places straight
+    assert all("Reno" in a and "Daegu" not in a for a in main._BIRTHPLACE_YOU_ANSWERS)
+    assert all("Daegu" in a and "Reno" not in a for a in main._CREATOR_ORIGIN_ANSWERS)
+    # process_turn routes each to the right place, with creator-origin winning over self
+    msgs = [{"role": "system", "content": "sys"}]
+    assert "Reno" in main.process_turn(msgs, "where were you born?")
+    assert main.process_turn(msgs, "where was your creator born?").count("Daegu") == 1
+    assert "Reno" not in main.process_turn(msgs, "where was Wontaek born?")
+    # "when were you born" still has no fabricated date but now names the birthplace
+    age = main.process_turn(msgs, "when were you born?")
+    assert "Reno" in age
+
+
+def test_gmail_parsing_and_send_gate():
+    import base64
+    import approval
+    from tools import gmail_tool
+
+    def b64(s):
+        return base64.urlsafe_b64encode(s.encode()).decode()
+
+    # header lookup is case-insensitive; body extraction walks nested parts (text/plain)
+    payload = {"mimeType": "multipart/alternative",
+               "headers": [{"name": "Subject", "value": "Hi"}, {"name": "From", "value": "Bob <b@x.com>"}],
+               "parts": [{"mimeType": "text/html", "body": {"data": b64("<p>ignore</p>")}},
+                         {"mimeType": "text/plain", "body": {"data": b64("hello world")}}]}
+    assert gmail_tool._header(payload, "subject") == "Hi"
+    assert gmail_tool._plain_text(payload) == "hello world"
+
+    # send is gated: a declined confirmation means nothing is sent
+    approval.reset()
+    approval.set_confirmer(lambda prompt, allow_always=True: False)
+    fake = mock.MagicMock()
+    with mock.patch.object(gmail_tool, "_service", return_value=fake):
+        out = gmail_tool.send_message("a@b.com", "subj", "body")
+    assert out.startswith("DENIED")
+    fake.users().messages().send.assert_not_called()
+    approval.reset()
+
+
+def test_email_skill_routes():
+    import skills
+    def matched(text):
+        return [s["name"] for s in skills.match_skills(text)]
+    assert "email" in matched("any new email from kevin?")
+    assert "email" in matched("check my inbox")
+    assert "email" in matched("unsubscribe me from these newsletters")
+    assert "email" in matched("delete that email")
+    assert "email" not in matched("write a poem about the ocean")
+
+
+class _FakeReq:
+    def __init__(self, val): self._val = val
+    def execute(self): return self._val
+
+class _FakeMessages:
+    def __init__(self, msgs):
+        self.msgs = msgs           # id -> list of header dicts
+        self.last_q = None
+        self.batched = None
+    def list(self, userId=None, q=None, maxResults=None):
+        import re
+        self.last_q = q
+        ids = list(self.msgs)
+        # honor a "from:<addr>" filter (used by the per-sender true-count query)
+        m = re.search(r"from:(\S+)", q or "")
+        if m:
+            addr = m.group(1)
+            ids = [i for i in self.msgs
+                   if any(addr in h.get("value", "") for h in self.msgs[i])]
+        return _FakeReq({"messages": [{"id": i} for i in ids]})
+    def list_next(self, req, resp): return None
+    def get(self, userId=None, id=None, format=None, metadataHeaders=None):
+        return _FakeReq({"payload": {"headers": self.msgs[id]}})
+    def batchModify(self, userId=None, body=None):
+        self.batched = body
+        return _FakeReq({})
+
+class _FakeSvc:
+    def __init__(self, msgs): self._m = _FakeMessages(msgs)
+    def users(self): return self
+    def messages(self): return self._m
+
+
+def _hdr(frm, unsub=False):
+    h = [{"name": "From", "value": frm}]
+    if unsub:
+        h.append({"name": "List-Unsubscribe", "value": "<mailto:x@y.com>"})
+    return h
+
+
+def test_spam_find_candidates_threshold_and_grouping():
+    from tools import gmail_tool
+    msgs = {}
+    for i in range(12):                       # 12 unread from the spammer (> 10)
+        msgs[f"a{i}"] = _hdr("Spammy <deals@spam.com>", unsub=True)
+    for i in range(3):                        # 3 from a real person (under threshold)
+        msgs[f"b{i}"] = _hdr("Kevin <kevin@x.com>")
+    with mock.patch.object(gmail_tool, "_service", return_value=_FakeSvc(msgs)):
+        cands = gmail_tool.find_spam_candidates(threshold=10)
+    assert len(cands) == 1
+    c = cands[0]
+    assert c["sender"] == "deals@spam.com" and c["count"] == 12 and c["unsubscribe"] is True
+
+
+def test_spam_trash_from_sender_unread_only_and_gated():
+    import approval
+    from tools import gmail_tool
+    msgs = {"a0": _hdr("deals@spam.com"), "a1": _hdr("deals@spam.com")}
+    svc = _FakeSvc(msgs)
+    # declined → nothing trashed
+    approval.reset()
+    approval.set_confirmer(lambda prompt, allow_always=True: False)
+    with mock.patch.object(gmail_tool, "_service", return_value=svc):
+        out = gmail_tool.trash_from_sender("deals@spam.com")
+    assert out.startswith("DENIED") and svc._m.batched is None
+    # the query is restricted to UNREAD (never deletes read mail)
+    assert "is:unread" in svc._m.last_q and "from:deals@spam.com" in svc._m.last_q
+    # approved → batch-trashes exactly those ids via the TRASH label
+    approval.set_confirmer(lambda prompt, allow_always=True: True)
+    with mock.patch.object(gmail_tool, "_service", return_value=svc):
+        out = gmail_tool.trash_from_sender("deals@spam.com")
+    assert "Moved 2" in out
+    assert svc._m.batched["addLabelIds"] == ["TRASH"] and len(svc._m.batched["ids"]) == 2
+    approval.reset()
+
+
+def test_spam_log_roundtrip_and_skill(tmp_path):
+    import importlib, config, spam, skills
+    with mock.patch.object(config, "SPAM_LOG_PATH", str(tmp_path / "spam.json")):
+        importlib.reload(spam)
+        assert spam.load_candidates() == []
+        spam.record_candidates([{"sender": "deals@spam.com", "count": 14, "unsubscribe": True}])
+        got = spam.load_candidates()
+        assert got and got[0]["sender"] == "deals@spam.com" and got[0]["count"] == 14
+        assert spam.last_scan_age() is not None and spam.last_scan_age() < 60
+    importlib.reload(spam)
+    # the cleanup skill is routed by the right phrases
+    names = lambda t: [s["name"] for s in skills.match_skills(t)]
+    assert "spam-cleanup" in names("spam cleanup")
+    assert "spam-cleanup" in names("declutter my inbox")
+
+
+def test_spam_keep_list_excludes_senders(tmp_path):
+    import importlib, config, spam
+    from tools import gmail_tool
+    with mock.patch.object(config, "SPAM_KEEP_PATH", str(tmp_path / "keep.json")):
+        importlib.reload(spam)
+        assert spam.load_keep() == set()
+        # exact address and bare-domain entries both match
+        spam.add_keep(["team@app.fullstory.com", "metorik.com"])
+        assert spam.is_kept("team@app.fullstory.com")
+        assert spam.is_kept("no-reply@metorik.com")        # domain match
+        assert not spam.is_kept("noreply@spam.com")
+        # find_spam_candidates skips kept senders even when over threshold
+        msgs = {}
+        for i in range(15):
+            msgs[f"k{i}"] = _hdr("Keep <team@app.fullstory.com>")
+        for i in range(12):
+            msgs[f"s{i}"] = _hdr("Spam <deals@spam.com>")
+        with mock.patch.object(gmail_tool, "_service", return_value=_FakeSvc(msgs)):
+            cands = gmail_tool.find_spam_candidates(threshold=10, exclude=spam.load_keep())
+        senders = {c["sender"] for c in cands}
+        assert "deals@spam.com" in senders
+        assert "team@app.fullstory.com" not in senders     # kept → excluded
+    importlib.reload(spam)
+
+
+def test_voice_interrupt_mode_selection():
+    import config, voice
+    # the configured mode picks the right interrupter (keypress vs voice barge-in)
+    with mock.patch.object(config, "VOICE_INTERRUPT", "key"):
+        assert voice._interrupter() is voice._wait_or_key
+    with mock.patch.object(config, "VOICE_INTERRUPT", "voice"):
+        assert voice._interrupter() is voice._wait_or_voice
+
+
+def test_speak_interruptible_routes_waiter_and_reports_interrupt():
+    import config, voice
+    # force the `say` path (no piper) and capture which waiter speak_interruptible uses
+    seen = {}
+    def fake_waiter(proc):
+        seen["used"] = True
+        return True  # pretend the user interrupted
+    with mock.patch.object(config, "TTS_ENGINE", "say"), \
+            mock.patch.object(voice, "_interrupter", return_value=fake_waiter), \
+            mock.patch.object(voice.subprocess, "Popen", return_value=mock.Mock()):
+        assert voice.speak_interruptible("hello there") is True   # interrupt propagates
+    assert seen.get("used")
+
+
+def test_spam_autodelete_list_and_auto_trash(tmp_path):
+    import importlib, config, spam, approval
+    from tools import gmail_tool
+    with mock.patch.object(config, "SPAM_AUTODELETE_PATH", str(tmp_path / "block.json")):
+        importlib.reload(spam)
+        assert spam.load_autodelete() == set()
+        spam.add_autodelete(["deals@spam.com", "junk.com"])
+        assert spam.is_autodelete("deals@spam.com")
+        assert spam.is_autodelete("promo@junk.com")          # domain match
+        assert not spam.is_autodelete("kevin@work.com")
+
+        # auto_trash_blocked trashes unread WITHOUT any confirmation (pre-authorized),
+        # even with a confirmer that would decline — unlike trash_from_sender.
+        msgs = {f"d{i}": _hdr("deals@spam.com") for i in range(5)}
+        svc = _FakeSvc(msgs)
+        approval.reset()
+        approval.set_confirmer(lambda prompt, allow_always=True: False)   # would decline
+        with mock.patch.object(gmail_tool, "_service", return_value=svc):
+            total, per = gmail_tool.auto_trash_blocked(["deals@spam.com"])
+        assert total == 5 and per["deals@spam.com"] == 5
+        assert svc._m.batched["addLabelIds"] == ["TRASH"]   # trashed despite decline
+        # the gated path still refuses without approval (unchanged behavior)
+        svc2 = _FakeSvc({"x": _hdr("deals@spam.com")})
+        with mock.patch.object(gmail_tool, "_service", return_value=svc2):
+            assert gmail_tool.trash_from_sender("deals@spam.com").startswith("DENIED")
+        assert svc2._m.batched is None
+        approval.reset()
+    importlib.reload(spam)
+
+
+def test_spam_subdomain_match_and_numbering_and_chunking():
+    import spam
+    from tools import gmail_tool
+    # subdomain matching: a 'regenics.com' entry covers send.regenics.com, not atlassian.net
+    entries = {"regenics.com"}
+    assert spam.matches("grayson@regenics.com", entries)
+    assert spam.matches("info@send.regenics.com", entries)
+    assert not spam.matches("jira@regenics.atlassian.net", entries)
+
+    # find_spam_candidates excludes a whole domain (incl. subdomains)
+    msgs = {}
+    for i in range(15):
+        msgs[f"r{i}"] = _hdr("Team <info@send.regenics.com>")
+    for i in range(12):
+        msgs[f"s{i}"] = _hdr("Spam <deals@spam.com>")
+    with mock.patch.object(gmail_tool, "_service", return_value=_FakeSvc(msgs)):
+        cands = gmail_tool.find_spam_candidates(threshold=10, exclude={"regenics.com"})
+    assert {c["sender"] for c in cands} == {"deals@spam.com"}      # regenics excluded
+
+    # numbered formatting
+    text = gmail_tool._format_candidates(
+        [{"sender": "a@x.com", "count": 9, "unsubscribe": True},
+         {"sender": "b@y.com", "count": 4, "unsubscribe": False}])
+    assert "1. a@x.com — 9 unread  (can unsubscribe)" in text
+    assert "2. b@y.com — 4 unread" in text
+
+    # _trash_ids chunks into batches of 1000
+    calls = []
+    svc = _FakeSvc({})
+    svc._m.batchModify = lambda userId=None, body=None: (calls.append(len(body["ids"])) or _FakeReq({}))
+    gmail_tool._trash_ids(svc, [str(i) for i in range(1500)])
+    assert calls == [1000, 500]

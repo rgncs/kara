@@ -16,9 +16,14 @@ voices/
 # Local secrets
 .env
 
-# Google OAuth secrets (Calendar tool)
+# Google OAuth secrets (Calendar / Gmail tools)
 credentials.json
 token.json
+
+# Spam-scan log + keep / auto-delete lists (hold your senders' email addresses)
+spam_candidates.json
+spam_keep.json
+spam_autodelete.json
 
 # Claude Code local config
 .claude/
