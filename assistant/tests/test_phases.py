@@ -932,9 +932,9 @@ def test_reasoning_think_tool():
     assert reasoning._strip_think("<think>long winded\nreasoning</think>  Answer: 42") == "Answer: 42"
     assert reasoning._strip_think("no tags here") == "no tags here"
     assert reasoning._strip_think("reasoning...</think>final") == "final"   # truncated trace
-    # registered as a tool for the controller to delegate to
+    # registered as a tool only when reasoning is enabled (off by default for now)
     from tools import TOOL_FUNCTIONS
-    assert "think" in TOOL_FUNCTIONS
+    assert ("think" in TOOL_FUNCTIONS) == config.REASONING_ENABLED
     # a failing reasoning model degrades to an ERROR string, never raises
     with mock.patch.object(reasoning, "chat", side_effect=RuntimeError("model not pulled")):
         out = reasoning.think("plan a refactor")

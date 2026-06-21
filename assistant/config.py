@@ -42,8 +42,9 @@ EMBED_MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text")
 # gracefully (helper falls back, the tool returns an error) rather than crashing.
 FAST_MODEL = os.environ.get("FAST_MODEL", "qwen3.5:4b")
 REASONING_MODEL = os.environ.get("REASONING_MODEL", "deepseek-r1")
-# Expose the reasoning model to the main model as the `think` tool.
-REASONING_ENABLED = os.environ.get("REASONING", "1").lower() in {"1", "true", "yes"}
+# Expose the reasoning model to the main model as the `think` tool. OFF by default
+# for now — the reasoning model runs the GPU hard; re-enable with REASONING=1.
+REASONING_ENABLED = os.environ.get("REASONING", "0").lower() in {"1", "true", "yes"}
 
 # --- Coding agent workspace (Phase 2 coding tools) ---------------------------
 # File tools are confined to this root so the agent can't roam the whole disk.
