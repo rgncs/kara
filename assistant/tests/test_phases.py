@@ -1443,3 +1443,39 @@ def test_self_facts_override_canned_identity(tmp_path):
             r2 = main.process_turn(msgs, "So when were you born?")
             assert "June 20th, 2026" in r2 and "don't have a birth" not in r2.lower()
     importlib.reload(self_facts)
+
+
+def test_multi_account_resolution_and_id_tags():
+    import config
+    from tools import google_auth, gmail_tool
+    with mock.patch.object(config, "GOOGLE_ACCOUNTS", ["work", "personal"]):
+        # first label keeps token.json (back-compat); others get token_<label>.json
+        assert google_auth._token_path("work") == config.GOOGLE_TOKEN_PATH
+        assert google_auth._token_path("personal").endswith("token_personal.json")
+        assert google_auth.primary_account() == "work"
+        # accounts_for: only authorized accounts (have a token file) are returned.
+        # available_accounts scans disk, so mock both exists + listdir (only token.json).
+        with mock.patch("os.path.exists", lambda p: p == config.GOOGLE_TOKEN_PATH), \
+                mock.patch("os.listdir", lambda d: ["token.json"]):
+            assert google_auth.available_accounts() == ["work"]
+            assert google_auth.accounts_for(None) == ["work"]          # aggregate = authorized
+            assert google_auth.accounts_for("personal") == []          # not authorized yet
+            assert google_auth.accounts_for("work") == ["work"]
+    # the 'account:id' tag from list_messages round-trips
+    assert gmail_tool._split_id("personal:abc123") == ("personal", "abc123")
+    assert gmail_tool._split_id("plainid") == (None, "plainid")
+
+
+def test_voice_barge_in_requires_two_words():
+    import config, voice
+    # default threshold is 2 words; a cough/blip/single word must NOT interrupt
+    assert config.VOICE_BARGE_MIN_WORDS == 2
+    for noise in ["", "  ", "uh", "hey", "mm"]:
+        assert not voice._enough_words(noise), noise
+    # real speech (>= 2 words) interrupts
+    for speech in ["stop talking", "hold on Kara", "wait a second please"]:
+        assert voice._enough_words(speech), speech
+    # threshold is configurable
+    with mock.patch.object(config, "VOICE_BARGE_MIN_WORDS", 3):
+        assert not voice._enough_words("stop talking")     # 2 words < 3
+        assert voice._enough_words("please stop talking")  # 3 words

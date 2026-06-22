@@ -3,6 +3,12 @@ name: calendar
 description: Check, create, or delete Google Calendar events.
 triggers: calendar, my schedule, what('s| is| do i have).*(today|tomorrow|this week|on), am i free, do i have (anything|plans|meetings), schedule (a|an|me)?, (add|put|create|book|set up).*(meeting|event|appointment|reminder).*(calendar|schedule)?, cancel (my|the).*(meeting|event|appointment), free on
 ---
+I may have MULTIPLE Google accounts connected (e.g. work, personal). When I ask about
+my schedule generally, COMBINE all of them — call `list_events` with no `account` so it
+merges every calendar (each event is tagged with its account). Only pass `account` when
+I name one ("my work calendar"). For create/delete, use the account I indicate, or the
+primary by default; the confirmation will name the account.
+
 When I ask about my schedule or to add/change events, use the calendar tools:
 
 1. To answer "what's on my calendar / am I free / do I have plans" — call

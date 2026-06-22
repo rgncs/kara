@@ -19,9 +19,9 @@ import config
 log = logging.getLogger("assistant.gmail")
 
 
-def _service():
+def _service(account: "str | None" = None):
     from . import google_auth
-    return google_auth.service("gmail", "v1")
+    return google_auth.service("gmail", "v1", account)
 
 
 def _confirm(prompt: str) -> bool:
@@ -59,41 +59,54 @@ def _plain_text(payload: dict) -> str:
     return ""
 
 
-def list_messages(query: str = None, max_results: int = 10, unread_only: bool = False) -> str:
-    """List/search inbox messages. `query` uses Gmail search syntax (e.g. 'from:bob newer_than:7d')."""
-    try:
-        svc = _service()
-    except Exception as e:  # noqa: BLE001
-        return f"ERROR: {e}"
+def list_messages(query: str = None, max_results: int = 10, unread_only: bool = False,
+                  account: str = None) -> str:
+    """List/search inbox messages across connected accounts (or one, if `account` is
+    given). `query` uses Gmail search syntax. Ids are tagged with their account."""
+    from . import google_auth
+    accts = google_auth.accounts_for(account)
+    if not accts:
+        return ("No Google account is connected for that — authorize one with "
+                "`python assistant/tools/google_auth.py <account>`.")
     q = (query or "").strip()
     if unread_only:
         q = (q + " is:unread").strip()
-    try:
-        res = svc.users().messages().list(
-            userId="me", q=q or None, maxResults=max(1, min(int(max_results), 25))).execute()
-        ids = res.get("messages", [])
-        if not ids:
-            return "No messages matched."
-        lines = []
-        for m in ids:
-            full = svc.users().messages().get(
-                userId="me", id=m["id"], format="metadata",
-                metadataHeaders=["From", "Subject", "Date"]).execute()
-            p = full.get("payload", {})
-            frm = parseaddr(_header(p, "From"))[1] or _header(p, "From")
-            subj = _header(p, "Subject") or "(no subject)"
-            unread = "•" if "UNREAD" in full.get("labelIds", []) else " "
-            snippet = (full.get("snippet", "") or "")[:80]
-            lines.append(f"{unread} {frm} — {subj}  [{snippet}…]  [id: {m['id']}]")
-        return "\n".join(lines)
-    except Exception as e:  # noqa: BLE001
-        return f"ERROR: {e}"
+    multi = len(accts) > 1
+    lines = []
+    for acct in accts:
+        try:
+            svc = _service(acct)
+            res = svc.users().messages().list(
+                userId="me", q=q or None, maxResults=max(1, min(int(max_results), 25))).execute()
+            for m in res.get("messages", []):
+                full = svc.users().messages().get(
+                    userId="me", id=m["id"], format="metadata",
+                    metadataHeaders=["From", "Subject", "Date"]).execute()
+                p = full.get("payload", {})
+                frm = parseaddr(_header(p, "From"))[1] or _header(p, "From")
+                subj = _header(p, "Subject") or "(no subject)"
+                unread = "•" if "UNREAD" in full.get("labelIds", []) else " "
+                snippet = (full.get("snippet", "") or "")[:80]
+                tag = f"[{acct}] " if multi else ""
+                lines.append(f"{unread} {tag}{frm} — {subj}  [{snippet}…]  [id: {acct}:{m['id']}]")
+        except Exception as e:  # noqa: BLE001 — one account failing shouldn't sink the rest
+            log.debug("gmail list failed for %s: %s", acct, e)
+    return "\n".join(lines) if lines else "No messages matched."
 
 
-def read_message(message_id: str) -> str:
-    """Return the full text of a message (headers + body)."""
+def _split_id(message_id: str):
+    """Accept an 'account:id' tag (from list_messages) -> (account, id); plain id -> (None, id)."""
+    if ":" in message_id:
+        acct, _, mid = message_id.partition(":")
+        return acct, mid
+    return None, message_id
+
+
+def read_message(message_id: str, account: str = None) -> str:
+    """Return the full text of a message (headers + body). message_id may be 'account:id'."""
+    acct, message_id = _split_id(message_id)
     try:
-        svc = _service()
+        svc = _service(account or acct)
         msg = svc.users().messages().get(userId="me", id=message_id, format="full").execute()
     except Exception as e:  # noqa: BLE001
         return f"ERROR: {e}"
@@ -105,13 +118,15 @@ def read_message(message_id: str) -> str:
     return out[:config.MAX_TOOL_OUTPUT_CHARS]
 
 
-def send_message(to: str, subject: str, body: str, cc: str = None) -> str:
-    """Send an email (from your account). Confirms before sending."""
+def send_message(to: str, subject: str, body: str, cc: str = None, account: str = None) -> str:
+    """Send an email FROM a connected account (default: primary). Confirms before sending."""
+    from . import google_auth
+    acct = account or google_auth.primary_account()
     try:
-        svc = _service()
+        svc = _service(acct)
     except Exception as e:  # noqa: BLE001
         return f"ERROR: {e}"
-    if not _confirm(f"Send email to {to} — subject '{subject}'?"):
+    if not _confirm(f"Send email from your {acct} account to {to} — subject '{subject}'?"):
         return "DENIED: email not sent (you declined)."
     msg = EmailMessage()
     msg["To"] = to
@@ -124,13 +139,14 @@ def send_message(to: str, subject: str, body: str, cc: str = None) -> str:
         sent = svc.users().messages().send(userId="me", body={"raw": raw}).execute()
     except Exception as e:  # noqa: BLE001
         return f"ERROR: {e}"
-    return f"Sent to {to} — message id {sent.get('id')}"
+    return f"Sent from {acct} to {to} — message id {sent.get('id')}"
 
 
-def trash_message(message_id: str) -> str:
-    """Move a message to Trash (recoverable). Confirms first."""
+def trash_message(message_id: str, account: str = None) -> str:
+    """Move a message to Trash (recoverable). Confirms first. message_id may be 'account:id'."""
+    acct, message_id = _split_id(message_id)
     try:
-        svc = _service()
+        svc = _service(account or acct)
     except Exception as e:  # noqa: BLE001
         return f"ERROR: {e}"
     # Identify it for the confirmation so you know what you're trashing.
@@ -151,14 +167,15 @@ def trash_message(message_id: str) -> str:
     return f"Moved to Trash: {desc}"
 
 
-def unsubscribe(message_id: str) -> str:
+def unsubscribe(message_id: str, account: str = None) -> str:
     """Unsubscribe from the sender of a message via its List-Unsubscribe header.
 
     Sends the unsubscribe email (mailto:) or calls the one-click/HTTP link.
-    Confirms before acting.
+    Confirms before acting. message_id may be 'account:id'.
     """
+    acct, message_id = _split_id(message_id)
     try:
-        svc = _service()
+        svc = _service(account or acct)
         msg = svc.users().messages().get(
             userId="me", id=message_id, format="metadata",
             metadataHeaders=["List-Unsubscribe", "List-Unsubscribe-Post", "From", "Subject"]).execute()
@@ -591,14 +608,16 @@ LIST_MESSAGES_SCHEMA = {
     "type": "function",
     "function": {
         "name": "list_messages",
-        "description": "List or search Gmail messages. `query` uses Gmail search syntax "
-                       "(e.g. 'from:kevin newer_than:7d', 'is:unread', 'subject:invoice').",
+        "description": "List or search Gmail messages across the user's connected accounts. "
+                       "`query` uses Gmail search syntax (e.g. 'from:kevin newer_than:7d', "
+                       "'is:unread', 'subject:invoice'). Ids come back as 'account:id'.",
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Gmail search query (optional)."},
-                "max_results": {"type": "integer", "description": "Max messages (default 10)."},
+                "max_results": {"type": "integer", "description": "Max messages per account (default 10)."},
                 "unread_only": {"type": "boolean", "description": "Only unread messages."},
+                "account": {"type": "string", "description": "Which account (e.g. 'work', 'personal'). Omit to search ALL connected accounts."},
             },
             "required": [],
         },
@@ -609,10 +628,11 @@ READ_MESSAGE_SCHEMA = {
     "type": "function",
     "function": {
         "name": "read_message",
-        "description": "Read the full text of a Gmail message by id (from list_messages).",
+        "description": "Read the full text of a Gmail message by id (from list_messages; pass "
+                       "the full 'account:id' tag).",
         "parameters": {
             "type": "object",
-            "properties": {"message_id": {"type": "string", "description": "The message id."}},
+            "properties": {"message_id": {"type": "string", "description": "The message id ('account:id' from list_messages)."}},
             "required": ["message_id"],
         },
     },
@@ -631,6 +651,7 @@ SEND_MESSAGE_SCHEMA = {
                 "subject": {"type": "string", "description": "Subject line."},
                 "body": {"type": "string", "description": "Plain-text email body."},
                 "cc": {"type": "string", "description": "CC address(es), optional."},
+                "account": {"type": "string", "description": "Which account to send FROM (e.g. 'work', 'personal'). Default: primary."},
             },
             "required": ["to", "subject", "body"],
         },
@@ -645,7 +666,7 @@ TRASH_MESSAGE_SCHEMA = {
                        "id from list_messages.",
         "parameters": {
             "type": "object",
-            "properties": {"message_id": {"type": "string", "description": "The message id."}},
+            "properties": {"message_id": {"type": "string", "description": "The message id ('account:id' from list_messages)."}},
             "required": ["message_id"],
         },
     },

@@ -44,6 +44,16 @@ if config.REASONING_ENABLED:
     TOOLS.append(reasoning.SCHEMA)
     TOOL_FUNCTIONS["think"] = reasoning.think
 
+# Account-management tools (list connected accounts, connect a new one) whenever any
+# Google service is set up.
+if config.CALENDAR_ENABLED or config.GMAIL_ENABLED:
+    from . import accounts
+    TOOLS += [accounts.LIST_ACCOUNTS_SCHEMA, accounts.CONNECT_ACCOUNT_SCHEMA]
+    TOOL_FUNCTIONS.update({
+        "list_google_accounts": accounts.list_google_accounts,
+        "connect_google_account": accounts.connect_google_account,
+    })
+
 # Google Calendar tools appear only when set up (credentials.json present) or forced
 # on with CALENDAR=1, so they don't clutter the tool list otherwise.
 if config.CALENDAR_ENABLED:

@@ -16,9 +16,10 @@ voices/
 # Local secrets
 .env
 
-# Google OAuth secrets (Calendar / Gmail tools)
+# Google OAuth secrets (Calendar / Gmail tools) — one token per connected account
 credentials.json
 token.json
+token_*.json
 
 # Kara's creator-set identity facts (birthday, birthplace)
 kara_self.json

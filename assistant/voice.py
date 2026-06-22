@@ -261,40 +261,57 @@ def _wait_or_key(proc) -> bool:
             pass
 
 
+def _enough_words(text: str) -> bool:
+    """True if transcribed barge-in audio is real speech (>= the word threshold)."""
+    return len((text or "").split()) >= config.VOICE_BARGE_MIN_WORDS
+
+
 def _wait_or_voice(proc) -> bool:
-    """Wait for playback `proc`; if the user starts SPEAKING (barge-in), kill it and
-    return True (interrupted). For headphone use — the mic must not pick up Kara's own
-    output, or she'd interrupt herself. Falls back to a plain wait if the mic is
-    unavailable."""
+    """Wait for playback `proc`; barge in ONLY if the user actually speaks — captured
+    audio that TRANSCRIBES to >= VOICE_BARGE_MIN_WORDS words. A cough/click/stray noise
+    (which won't form real words) won't cut Kara off. Headphone use only — the mic must
+    not pick up Kara's own output. Falls back to a plain wait if the mic is unavailable."""
+    import numpy as np
     import sounddevice as sd
     sr = config.VOICE_SAMPLE_RATE
     frame_ms = 30
     n = int(sr * frame_ms / 1000)
-    need_start = max(1, config.VAD_START_MS // frame_ms)
-    speech_run = 0
+    need_start = max(1, config.VAD_START_MS // frame_ms)            # frames of voice to start capturing
+    need_silence = max(1, config.VAD_BARGE_SILENCE_MS // frame_ms)  # trailing quiet that ends a capture
+    max_frames = max(need_start + 1, int(config.VAD_BARGE_MAX_MS / frame_ms))
     try:
         stream = sd.InputStream(samplerate=sr, channels=1, dtype="int16", blocksize=n)
     except Exception as e:  # noqa: BLE001
         log.debug("barge-in mic unavailable (%s) — playing without it", e)
         proc.wait()
         return False
+    speech_run, silence_run, capturing, buf = 0, 0, False, []
     with stream:
         while proc.poll() is None:
             try:
                 data, _ = stream.read(n)
             except Exception:  # noqa: BLE001 — mic glitch: stop monitoring, let playback finish
                 break
-            if _is_speech(data[:, 0], sr):
-                speech_run += 1
-                if speech_run >= need_start:        # sustained speech → barge in
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=1)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                    return True
+            frame = data[:, 0]
+            voiced = _is_speech(frame, sr)
+            if not capturing:
+                speech_run = speech_run + 1 if voiced else 0
+                if speech_run >= need_start:               # voice onset → start capturing
+                    capturing, buf, silence_run = True, [frame], 0
             else:
-                speech_run = 0
+                buf.append(frame)
+                silence_run = 0 if voiced else silence_run + 1
+                if silence_run >= need_silence or len(buf) >= max_frames:
+                    # End of an utterance — transcribe and require real words to barge in.
+                    audio = np.concatenate(buf).astype("float32") / 32768.0
+                    if _enough_words(transcribe(audio)):
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=1)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                        return True
+                    capturing, buf, speech_run = False, [], 0    # noise/blip → keep playing
     proc.wait()  # let playback finish (and populate returncode) before the caller cleans up
     return False
 

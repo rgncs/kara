@@ -96,6 +96,10 @@ GOOGLE_CREDENTIALS_PATH = os.path.abspath(os.environ.get(
     "GOOGLE_CREDENTIALS_PATH", os.path.join(os.path.dirname(__file__), "..", "credentials.json")))
 GOOGLE_TOKEN_PATH = os.path.abspath(os.environ.get(
     "GOOGLE_TOKEN_PATH", os.path.join(os.path.dirname(__file__), "..", "token.json")))
+# Multiple Google accounts can be connected (e.g. work + personal). The FIRST label
+# keeps the original token.json (no re-auth); each other label gets token_<label>.json
+# beside it. Authorize each once: `python assistant/tools/google_auth.py <label>`.
+GOOGLE_ACCOUNTS = [a.strip() for a in os.environ.get("GOOGLE_ACCOUNTS", "work,personal").split(",") if a.strip()]
 CALENDAR_ID = os.environ.get("CALENDAR_ID", "primary")
 CALENDAR_CONFIRM_WRITES = os.environ.get(
     "CALENDAR_CONFIRM_WRITES", "1").lower() in {"1", "true", "yes"}
@@ -206,6 +210,13 @@ PRONUNCIATIONS = {"Wontaek": "Wontek"}
 #   "voice" — just start talking (barge-in; for HEADPHONES, where the mic can't hear
 #             Kara). Set by --speaker / --headphone, or the VOICE_INTERRUPT env var.
 VOICE_INTERRUPT = os.environ.get("VOICE_INTERRUPT", "key").lower()
+# Voice barge-in only cuts Kara off if the captured audio TRANSCRIBES to at least this
+# many words — so a cough, a click, or a stray noise (which won't form real words)
+# doesn't interrupt her. The capture ends after VAD_BARGE_SILENCE_MS of quiet, or at
+# VAD_BARGE_MAX_MS, then it's transcribed and word-counted.
+VOICE_BARGE_MIN_WORDS = int(os.environ.get("VOICE_BARGE_MIN_WORDS", "2"))
+VAD_BARGE_SILENCE_MS = int(os.environ.get("VAD_BARGE_SILENCE_MS", "400"))
+VAD_BARGE_MAX_MS = int(os.environ.get("VAD_BARGE_MAX_MS", "2000"))
 
 # Hands-free conversation: listen continuously with voice-activity detection
 # instead of press-Enter-to-talk. Set VOICE_HANDS_FREE=0 for push-to-talk.

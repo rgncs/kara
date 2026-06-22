@@ -14,10 +14,10 @@ import config
 
 log = logging.getLogger("assistant.calendar")
 
-def _service():
-    """Return an authenticated Calendar API client (shared Google OAuth)."""
+def _service(account: "str | None" = None):
+    """Return an authenticated Calendar API client for an account (default: primary)."""
     from . import google_auth
-    return google_auth.service("calendar", "v3")
+    return google_auth.service("calendar", "v3", account)
 
 
 def _calendar_tz(service) -> "str | None":
@@ -141,45 +141,56 @@ def _time_field(value: str, tz: "str | None") -> dict:
 
 
 def list_events(time_min: str = None, time_max: str = None,
-                max_results: int = 10, query: str = None) -> str:
-    """List upcoming events (optionally within a window or matching a text query)."""
-    try:
-        service = _service()
-    except Exception as e:  # noqa: BLE001
-        return f"ERROR: {e}"
+                max_results: int = 10, query: str = None, account: str = None) -> str:
+    """List upcoming events across connected accounts (or one, if `account` is given).
+    Events from every account are merged and sorted; each is tagged with its account."""
+    from . import google_auth
+    accts = google_auth.accounts_for(account)
+    if not accts:
+        return ("No Google account is connected for that — authorize one with "
+                "`python assistant/tools/google_auth.py <account>`.")
     time_min, time_max = _resolve_window(time_min, time_max)
-    params = {"calendarId": config.CALENDAR_ID, "timeMin": time_min,
-              "maxResults": max(1, min(int(max_results), 50)),
-              "singleEvents": True, "orderBy": "startTime"}
-    if time_max:
-        params["timeMax"] = time_max
-    if query:
-        params["q"] = query
-    try:
-        items = service.events().list(**params).execute().get("items", [])
-    except Exception as e:  # noqa: BLE001
-        return f"ERROR: {e}"
-    if not items:
+    rows = []  # (when, account, event)
+    for acct in accts:
+        params = {"calendarId": config.CALENDAR_ID, "timeMin": time_min,
+                  "maxResults": max(1, min(int(max_results), 50)),
+                  "singleEvents": True, "orderBy": "startTime"}
+        if time_max:
+            params["timeMax"] = time_max
+        if query:
+            params["q"] = query
+        try:
+            items = _service(acct).events().list(**params).execute().get("items", [])
+        except Exception as e:  # noqa: BLE001 — one account failing shouldn't sink the rest
+            log.debug("calendar list failed for %s: %s", acct, e)
+            continue
+        for ev in items:
+            start = ev.get("start", {})
+            rows.append((start.get("dateTime") or start.get("date") or "", acct, ev))
+    if not rows:
         return "No upcoming events found for that query."
+    rows.sort(key=lambda r: r[0])
+    multi = len(accts) > 1
     lines = []
-    for ev in items:
-        start = ev.get("start", {})
-        when = start.get("dateTime") or start.get("date") or "?"
-        summary = ev.get("summary", "(no title)")
+    for when, acct, ev in rows:
+        tag = f"[{acct}] " if multi else ""
         loc = f" @ {ev['location']}" if ev.get("location") else ""
-        lines.append(f"- {when}  {summary}{loc}  [id: {ev.get('id')}]")
+        lines.append(f"- {when or '?'}  {tag}{ev.get('summary', '(no title)')}{loc}  [id: {ev.get('id')}]")
     return "\n".join(lines)
 
 
-def create_event(summary: str, start: str, end: str,
-                 description: str = None, location: str = None) -> str:
-    """Create an event. start/end are ISO strings ('2026-06-21T15:00:00' or a date)."""
+def create_event(summary: str, start: str, end: str, description: str = None,
+                 location: str = None, account: str = None) -> str:
+    """Create an event on an account's calendar (default: primary). start/end are ISO."""
+    from . import google_auth
+    acct = account or google_auth.primary_account()
     try:
-        service = _service()
+        service = _service(acct)
     except Exception as e:  # noqa: BLE001
         return f"ERROR: {e}"
     if config.CALENDAR_CONFIRM_WRITES and not approval.confirm_action(
-            f"Create calendar event '{summary}' from {start} to {end}?", always_ask=True):
+            f"Create calendar event '{summary}' from {start} to {end} on your {acct} calendar?",
+            always_ask=True):
         return "DENIED: event not created (you declined)."
     tz = _calendar_tz(service)
     body = {"summary": summary,
@@ -192,23 +203,25 @@ def create_event(summary: str, start: str, end: str,
         ev = service.events().insert(calendarId=config.CALENDAR_ID, body=body).execute()
     except Exception as e:  # noqa: BLE001
         return f"ERROR: {e}"
-    return f"Created '{summary}' — {ev.get('htmlLink', '(no link)')}  [id: {ev.get('id')}]"
+    return f"Created '{summary}' on {acct} — {ev.get('htmlLink', '(no link)')}  [id: {ev.get('id')}]"
 
 
-def delete_event(event_id: str) -> str:
-    """Delete an event by its id (get the id from list_events first)."""
+def delete_event(event_id: str, account: str = None) -> str:
+    """Delete an event by id from an account's calendar (default: primary)."""
+    from . import google_auth
+    acct = account or google_auth.primary_account()
     try:
-        service = _service()
+        service = _service(acct)
     except Exception as e:  # noqa: BLE001
         return f"ERROR: {e}"
     if config.CALENDAR_CONFIRM_WRITES and not approval.confirm_action(
-            f"Delete calendar event with id {event_id}?", always_ask=True):
+            f"Delete calendar event {event_id} from your {acct} calendar?", always_ask=True):
         return "DENIED: event not deleted (you declined)."
     try:
         service.events().delete(calendarId=config.CALENDAR_ID, eventId=event_id).execute()
     except Exception as e:  # noqa: BLE001
         return f"ERROR: {e}"
-    return f"Deleted event {event_id}."
+    return f"Deleted event {event_id} from {acct}."
 
 
 LIST_EVENTS_SCHEMA = {
@@ -227,6 +240,7 @@ LIST_EVENTS_SCHEMA = {
                 "time_max": {"type": "string", "description": "End of window (optional); same formats. A relative phrase in time_min sets this automatically."},
                 "max_results": {"type": "integer", "description": "Max events to return (default 10)."},
                 "query": {"type": "string", "description": "Free-text filter (optional)."},
+                "account": {"type": "string", "description": "Which connected account's calendar (e.g. 'work', 'personal'). Omit to combine ALL accounts."},
             },
             "required": [],
         },
@@ -248,6 +262,7 @@ CREATE_EVENT_SCHEMA = {
                 "end": {"type": "string", "description": "ISO end datetime or date."},
                 "description": {"type": "string", "description": "Event details (optional)."},
                 "location": {"type": "string", "description": "Event location (optional)."},
+                "account": {"type": "string", "description": "Which account's calendar (e.g. 'work', 'personal'). Default: primary."},
             },
             "required": ["summary", "start", "end"],
         },
@@ -261,7 +276,10 @@ DELETE_EVENT_SCHEMA = {
         "description": "Delete a Google Calendar event by id (from list_events). Confirms first.",
         "parameters": {
             "type": "object",
-            "properties": {"event_id": {"type": "string", "description": "The event's id."}},
+            "properties": {
+                "event_id": {"type": "string", "description": "The event's id."},
+                "account": {"type": "string", "description": "The account the event is on (from list_events). Default: primary."},
+            },
             "required": ["event_id"],
         },
     },
