@@ -1404,7 +1404,7 @@ def test_short_reaction_steers_to_last_topic():
     with mock.patch.object(main, "agent_turn", fake_agent), \
             mock.patch.object(main, "recall", lambda q: []):
         main.process_turn(msgs, "Really?")
-    assert "short reaction" in captured["turn"]
+    assert "PREVIOUS answer" in captured["turn"]
     assert "talking about yourself" in captured["turn"]   # explicitly blocks identity drift
 
     # a normal turn gets NO steer
@@ -1414,7 +1414,7 @@ def test_short_reaction_steers_to_last_topic():
     with mock.patch.object(main, "agent_turn", fake_agent), \
             mock.patch.object(main, "recall", lambda q: []):
         main.process_turn(msgs2, "what is the capital of France?")
-    assert "short reaction" not in captured["turn"]
+    assert "PREVIOUS answer" not in captured["turn"]
 
 
 def test_self_facts_override_canned_identity(tmp_path):
@@ -1479,3 +1479,36 @@ def test_voice_barge_in_requires_two_words():
     with mock.patch.object(config, "VOICE_BARGE_MIN_WORDS", 3):
         assert not voice._enough_words("stop talking")     # 2 words < 3
         assert voice._enough_words("please stop talking")  # 3 words
+
+
+def test_revision_request_stays_on_previous_answer():
+    import main
+    # revision/refinement requests are detected (they refer to the last answer)
+    for s in ["thats too long. give it to me in one line", "too long", "give it in one line",
+              "make it shorter", "shorter", "rephrase that", "try again", "condense it",
+              "one sentence please", "tldr", "simplify it", "more detail"]:
+        assert main._refers_to_previous(s), s
+    # genuine NEW tasks must NOT be treated as revisions (no concrete-object false match)
+    for s in ["shorten this video file please", "simplify this code", "condense this report",
+              "rephrase the intro paragraph of the doc", "make the updates",
+              "give me a commit message", "write a long story"]:
+        assert not main._refers_to_previous(s), s
+
+    # end to end: a "too long" follow-up skips memory recall AND steers to the prior
+    # answer, so an unrelated memory can't hijack it (the reported bug)
+    captured, recalled = {}, {"hit": False}
+    def fake_agent(msgs, on_token=None):
+        captured["turn"] = msgs[-1]["content"]
+        return "one-liner"
+    def fake_recall(q):
+        recalled["hit"] = True
+        return [{"text": "Cyrus is married to Dina", "ts": 0, "distance": 0.1, "scope": "global"}]
+    msgs = [{"role": "system", "content": "s"},
+            {"role": "user", "content": "one line commit message"},
+            {"role": "assistant", "content": "Add logging and improve validation\n- a\n- b"}]
+    with mock.patch.object(main, "agent_turn", fake_agent), \
+            mock.patch.object(main, "recall", fake_recall):
+        main.process_turn(msgs, "thats too long. give it to me in one line")
+    assert not recalled["hit"]                      # recall skipped → no stray memory
+    assert "PREVIOUS answer" in captured["turn"]    # steered to revise the last output
+    assert "Cyrus" not in captured["turn"]          # unrelated fact never injected

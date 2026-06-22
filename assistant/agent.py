@@ -22,14 +22,17 @@ import logging
 import uuid
 from types import SimpleNamespace
 
+import config
 from llm import chat
 from tool_parse import extract_text_tool_calls
 from tools import TOOLS, TOOL_FUNCTIONS
 
 log = logging.getLogger("assistant.agent")
 
-# Safety valve: a confused model can loop on tool calls forever.
-MAX_STEPS = 12
+# Safety valve: a confused model can loop on tool calls forever. Raised to accommodate
+# legitimately long multi-step turns (e.g. spam cleanup across many senders, multi-account
+# sweeps). Override with MAX_AGENT_STEPS.
+MAX_STEPS = config.MAX_AGENT_STEPS
 
 
 def _normalize_calls(msg) -> list[dict]:

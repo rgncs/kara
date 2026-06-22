@@ -338,6 +338,34 @@ def _is_short_reaction(text: str) -> bool:
     return bool(_REACTION.search(text or ""))
 
 
+# A request to REVISE the previous answer ("that's too long", "in one line", "shorter",
+# "rephrase that", "try again"). Like a reaction, it refers to the LAST answer — skip
+# memory recall and keep the model on that output, so it doesn't pull in unrelated facts.
+_REVISE = re.compile(
+    r"(?i)("
+    r"\btoo long\b|\btoo short\b|\btoo wordy\b|\btoo verbose\b|\btoo much text\b|"
+    r"\bin (?:one|a single) (?:line|sentence)\b|\bin a sentence\b|\bone[\s-]?line\b|"
+    r"\bone[\s-]?liner\b|\bsingle line\b|\bone sentence\b|\bjust (?:one|a) (?:line|sentence)\b|"
+    r"\bmake it (?:short|shorter|brief|briefer|concise|simpler|longer|tighter)\b|"
+    r"\bkeep it (?:short|brief|concise)\b|"
+    r"\bshorter\b|\bless wordy\b|\bmore concise\b|\bfewer words\b|\bcut it down\b|"
+    # revision verbs, but NOT when followed by a concrete object ("shorten this video file")
+    r"\b(?:shorten|condense|simplify|tighten|trim|rephrase|reword)\b(?!\s+(?:this|the|a|an|my|these|those|your)\s+\w)|"
+    r"\brewrite (?:that|it|this)\b|\bsay it (?:differently|another way)\b|"
+    r"\btry again\b|\bdo(?:\s+that|\s+it)? again\b|\bredo (?:that|it)\b|"
+    r"\btl;?dr\b|\bexpand (?:on )?(?:that|it)\b|\bmore detail\b|\belaborate\b"
+    r")")
+
+
+def _is_revision_request(text: str) -> bool:
+    return bool(_REVISE.search(text or ""))
+
+
+def _refers_to_previous(text: str) -> bool:
+    """A reaction or a revision request — both point at the last answer, not a new topic."""
+    return _is_short_reaction(text) or _is_revision_request(text)
+
+
 # A request/question, not a personal statement — skip casual fact extraction on these so
 # content like "write a letter that says I love him" isn't saved as a fake preference.
 _REQUEST = re.compile(r"(?i)^\s*(?:can|could|would|will|please|are you|could you|would you|"
@@ -820,7 +848,7 @@ def process_turn(messages: list[dict], user_input: str, printer: "_Printer | Non
     # the current conversation ("what's good there?") or a recap request ("what have we
     # been talking about?"), so a stray memory can't hijack or pollute the answer.
     if (_is_followup_reference(user_input) or _is_conversation_recap(user_input)
-            or _is_short_reaction(user_input)):
+            or _refers_to_previous(user_input)):
         mems = []
     else:
         try:
@@ -846,16 +874,17 @@ def process_turn(messages: list[dict], user_input: str, printer: "_Printer | Non
         log.debug("skill matching failed: %s", e)
         skill_block = ""
 
-    # A short reaction ("Really?", "Why?") refers to the LAST topic — steer the model to
-    # stay on it instead of drifting (e.g. into an identity spiel).
+    # A reaction ("Really?", "Why?") or a revision request ("too long", "in one line",
+    # "rephrase that") refers to the LAST answer — steer the model to revise/respond to
+    # THAT, instead of drifting onto an unrelated memory or an identity spiel.
     reaction_steer = ""
-    if _is_short_reaction(user_input) and any(
+    if _refers_to_previous(user_input) and any(
             m.get("role") == "assistant" for m in messages[:base_len]):
         reaction_steer = (
-            "[This is a short reaction to your PREVIOUS answer — stay on that exact same "
-            "topic and respond to it (confirm it, justify it, cite a source, or elaborate; "
-            "re-check the fact with web_search if useful). Do NOT switch subjects, and do "
-            "NOT start talking about yourself or who made you.]")
+            "[This refers to your PREVIOUS answer — revise or respond to THAT exact output "
+            "(e.g. shorten/rephrase/justify it, or answer the reaction). Stay on the same "
+            "topic; do NOT switch subjects, introduce unrelated facts, or start talking "
+            "about yourself or who made you.]")
 
     # Fold context into the user turn (transiently — restored to clean after).
     preface = _memory_preface(mems) if mems else ""

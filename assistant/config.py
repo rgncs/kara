@@ -33,6 +33,9 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 # agent controller than gemma3 (whose tool use is simulated and flaky).
 CHAT_MODEL = os.environ.get("CHAT_MODEL", "qwen3-coder:30b")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text")
+# Max tool-resolution steps in one turn before the loop gives up (safety valve against
+# a model looping on tool calls). High enough for long multi-step tasks like spam cleanup.
+MAX_AGENT_STEPS = int(os.environ.get("MAX_AGENT_STEPS", "30"))
 
 # Kara's OWN identity facts that the creator can set (birthday, birthplace) — they
 # override the built-in defaults. Persisted here (gitignored, user-customized state),
